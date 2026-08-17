@@ -12,7 +12,7 @@ Sage 是 Vue 3 管理 SPA，覆盖租户/成员/权限、账号/联系人、终�
 
 浏览器只访问同源 Ingress 的 `/api/*`；Ingress 只做 TLS、CORS、限流和精确路由，内部服务仍为 ClusterIP。Sage 作为 OIDC 公共客户端使用授权码 + PKCE，access token 仅存内存并以 Bearer 发送，不使用不存在的 BFF/HttpOnly 应用会话。每个服务自行校验 issuer/audience/签名/过期和 tenant/principal claims，并依据 Mud `principal_epoch/status` 及撤销事件拒绝已禁用身份；租户切换必须重新授权取得新 token。浏览器不持有服务身份。
 
-各服务 OpenAPI 是机器真源，Release Manifest 固定规格版本和生成 client；客户端按服务分包，共享的只有 Seed error/event wire schema。CI 检测破坏变更并运行消费者契约，消费者迁移后按登记版本删除旧 client，禁止手写重复 DTO。服务返回 capability/permission 供界面解释操作，但服务端始终重新授权。
+各服务 OpenAPI 是机器真源，Release Manifest 固定规格版本和生成 client；客户端按服务分包，error/event wire schema 也由对应服务契约拥有。CI 检测破坏变更并运行消费者契约，消费者迁移后按登记版本删除旧 client，禁止手写重复 DTO。服务返回 capability/permission 供界面解释操作，但服务端始终重新授权。
 
 权限 UI 明示 Creator、直接 Owner、有效 Own 来源、User 和关联实体权限；默认 Own scope，Use 必须显式切换。列表、详情和导出请求/结果都携带并显示实际 scope 与权限来源；导出由服务端重新鉴权。Owner 移交收集原因且不改变 Entity Link，User 授权不产生管理权。
 
