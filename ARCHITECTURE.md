@@ -6,6 +6,8 @@
 
 Sage 是 Vue 3 管理 SPA，覆盖租户/成员/权限、账号/联系人、终端、内容、插件/Action/Workflow、任务、会话、报表和内嵌 Iris Chat。Sage 不承载领域状态机、不直连数据库、不保存长期凭据，也不以隐藏按钮替代服务端授权。
 
+Sage 不依赖 Python 后端公共库 Seed，也不向 Seed 提交 Dependency Assignment。前端通用能力由 Sage 自身前端基础层管理，服务交互只消费各后端发布的 OpenAPI/事件契约，不通过 Seed Wheel 或后端 adapter 形成间接依赖。
+
 ## 2. 前端结构
 
 按 feature 组织：`governance`、`accounts`、`contacts`、`terminals`、`assets`、`automation`、`tasks`、`conversations`、`reports`、`chat`。每个 feature 分 UI、query/state、generated API client、route/permission meta；共享层仅放设计系统、认证会话、错误呈现和遥测。

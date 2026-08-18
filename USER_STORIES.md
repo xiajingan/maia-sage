@@ -2,6 +2,8 @@
 
 > Sage 按 S0 身份/导航、S1 治理、S2 资产/终端、S3 Automation Studio、S4 Runtime、S5 Conversation/Agent、S6 Operations 演进。页面完成不等于故事完成，必须有真实服务端契约、拒绝、重连和 E2E。
 
+Sage 不消费 Seed，也不产生 Seed Dependency Assignment；后端能力缺口应向对应 API/领域契约所有者提出统一 Assignment。
+
 | ID | 用户故事 | 验收标准 | 来源 | 状态 |
 |---|---|---|---|---|
 | SAGE-001 | 作为管理员，我希望治理租户、成员、管理组、角色和应用。 | 层级/角色/状态可维护；权限拒绝正确；高风险变更确认和审计可见。 | SAG-001/FND-001/002 | `draft` |
