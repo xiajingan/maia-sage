@@ -1,5 +1,7 @@
 # Sage 架构
 
+**当前 Profile**：`simple-layered`
+
 > Sage 是 Maia 的统一管理与配置入口，服务端 API 是权限和状态的唯一裁决者。
 
 ## 1. 定位
