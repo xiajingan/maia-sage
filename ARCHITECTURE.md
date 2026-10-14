@@ -8,7 +8,7 @@
 
 Sage 是 Vue 3 管理 SPA，覆盖租户/成员/权限、账号/联系人、终端、内容、插件/Action/Workflow、任务、会话、报表和内嵌 Iris Chat。Sage 不承载领域状态机、不直连数据库、不保存长期凭据，也不以隐藏按钮替代服务端授权。
 
-Sage 不依赖 Python 后端公共库 Seed，也不向 Seed 提交 Dependency Assignment。前端通用能力由 Sage 自身前端基础层管理，服务交互只消费各后端发布的 OpenAPI/事件契约，不通过 Seed Wheel 或后端 adapter 形成间接依赖。
+Sage 不依赖 Seed 的服务端公共包。前端通用能力由 Sage 自身前端基础层管理，服务交互只消费各后端发布的 OpenAPI/事件契约，不通过服务端 adapter 形成间接依赖。
 
 ## 2. 前端结构
 
@@ -16,7 +16,7 @@ Sage 不依赖 Python 后端公共库 Seed，也不向 Seed 提交 Dependency As
 
 浏览器只访问同源 Ingress 的 `/api/*`；Ingress 只做 TLS、CORS、限流和精确路由，内部服务仍为 ClusterIP。Sage 作为 OIDC 公共客户端使用授权码 + PKCE，access token 仅存内存并以 Bearer 发送，不使用不存在的 BFF/HttpOnly 应用会话。每个服务自行校验 issuer/audience/签名/过期和 tenant/principal claims，并依据 Mud `principal_epoch/status` 及撤销事件拒绝已禁用身份；租户切换必须重新授权取得新 token。浏览器不持有服务身份。
 
-各服务 OpenAPI 是机器真源，Release Manifest 固定规格版本和生成 client；客户端按服务分包，error/event wire schema 也由对应服务契约拥有。CI 检测破坏变更并运行消费者契约，消费者迁移后按登记版本删除旧 client，禁止手写重复 DTO。服务返回 capability/permission 供界面解释操作，但服务端始终重新授权。
+各服务 OpenAPI 是机器真源，Release Manifest 固定规格版本和生成 client；客户端按服务分包，error/event wire schema 也由对应服务契约拥有。CI 检测破坏变更并运行消费者契约，禁止手写重复 DTO。服务返回 capability/permission 供界面解释操作，但服务端始终重新授权。
 
 权限 UI 明示 Creator、直接 Owner、有效 Own 来源、User 和关联实体权限；默认 Own scope，Use 必须显式切换。列表、详情和导出请求/结果都携带并显示实际 scope 与权限来源；导出由服务端重新鉴权。Owner 移交收集原因且不改变 Entity Link，User 授权不产生管理权。
 
@@ -53,10 +53,6 @@ Server state 使用 query cache，以 resource version/cursor 更新；编辑草
 - CSP、Trusted Types、依赖 SCA、输出编码和敏感字段遮罩；token 仅内存，刷新/撤销路径 E2E。
 - 每个高风险 Command 覆盖预览过期、换参、重复点击、401/403、部分失败和重连。
 
-产品路线：S0 导航/身份/设计系统 → S1 治理/权限 → S2 终端与资产 → S3 Automation Studio → S4 Task/Proof → S5 Conversation/Tea → S6 Iris Chat → S7 数据运营。后续阶段不得通过前端 Mock 绕过未完成后端契约。
-
 ## 4. 部署与质量
 
 静态产物构建一次，以 OCI/Helm 经 Ingress 发布。容器启动时只把通过 Schema 校验的公共 API base、OIDC issuer/client、版本写入独立 `/runtime-config.json`，设 no-store/CSP 并关联 Release Manifest；Secret 永不进入文件或 bundle，配置无效则 readiness 失败。质量覆盖类型、组件、契约、可访问性和 Playwright E2E；Test 使用真实后端验证租户隔离、token/身份撤销、Own/Use 导出、拒绝、高风险确认、断流恢复和任务闭环。
-
-迁移以 `maia-sage-v0.1.0` 切换按服务生成的 client、Iris SSE EventLog 和 Stem Confirmation 引用，并迁移 route/query cache key；Test 消费者契约和 E2E 通过后，`maia-sage-v0.2.0` 删除手写 DTO、旧确认组件、旧 WS Chat 和旧状态适配器，不保留双协议。
