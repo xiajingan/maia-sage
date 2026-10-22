@@ -18,7 +18,7 @@ Sage 不依赖 Seed 的服务端公共包。前端通用能力由 Sage 自身前
 
 各服务 OpenAPI 是机器真源，Release Manifest 固定规格版本和生成 client；客户端按服务分包，error/event wire schema 也由对应服务契约拥有。CI 检测破坏变更并运行消费者契约，禁止手写重复 DTO。服务返回当前 User 对目标的有效 Own/Use 及权限来源供界面解释操作，但服务端始终重新授权。
 
-权限语义以 Maia 主仓库 `USER_STORIES.md#21-权限模型`（§2.1.2～§2.1.6）为准。权限 UI 明示 Creator、Owner 节点、使用范围、有效 Own/Use 来源（Owner 节点、直接或继承的 `manager`、命中的使用范围元素）和关联实体权限；创建时选择 Owner 节点（`manager` 选本 Workspace 或其下级，`member` 落到所选 Workspace 下的本人个人节点，默认当前 Workspace）；创建与编辑时展示按业务类型写入的默认使用范围，只提供该类型允许的写法，可选 Workspace 与 User 限于设置者所属 Workspace 或其下级及其中的 User；默认 Own scope，Use 必须显式切换。Account 页按 Own/Use 区分责任视图（可叫停）与运营视图；任务进度与统计标注全量/切片口径，切片只显示切片进度百分比；能力要求只显示兼容性。列表、详情和导出请求/结果都携带并显示实际 scope 与权限来源；导出由服务端重新鉴权。Owner 移交收集原因且不改变 Entity Link，使用范围不产生管理权，调整使用范围仅限有效 Own 并审计。
+权限语义以 Maia 主仓库 `USER_STORIES.md#21-权限模型`（§2.1.2～§2.1.6）为准。权限 UI 明示 Creator、Owner 节点、使用范围、有效 Own/Use 来源（Owner 节点、直接或继承的 `manager`、命中的使用范围元素）和关联实体权限；创建时明确 Owner 节点（`manager` 创建的资源实体固定归属当前所在 Workspace，界面不能选择下级 Workspace，服务端拒绝将下级 Workspace 作为创建归属的请求；`member` 落到所选 Workspace 下的本人个人节点，默认当前 Workspace）；创建与编辑时展示按业务类型写入的默认使用范围，只提供该类型允许的写法，可选 Workspace 与 User 限于设置者所属 Workspace 或其下级及其中的 User；默认 Own scope，Use 必须显式切换。Account 页按 Own/Use 区分责任视图（可叫停）与运营视图；任务进度与统计标注全量/切片口径，切片只显示切片进度百分比；能力要求只显示兼容性。列表、详情和导出请求/结果都携带并显示实际 scope 与权限来源；导出由服务端重新鉴权。主动移交 Owner 收集原因且不改变 Entity Link；成员 U 离开 W 后，界面按资源服务返回的事实将原 W/U 数据展示为归属 W，显示自动归属变更审计，无需人工移交；仅停用而未撤销成员关系不触发归属变更。使用范围不产生管理权，调整使用范围仅限有效 Own 并审计。
 
 ## 3. 交互原则
 

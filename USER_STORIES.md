@@ -59,7 +59,7 @@ Sage 不消费 Seed，也不产生 Seed Dependency Assignment；后端能力缺�
 |------|----------------|------------|
 | 根 Workspace / Workspace 树 | 安全、身份、凭据与计费的隔离边界 / 根下任意层级、可并列分支的下级 Workspace；用户在 Sage 中显式切换当前根 Workspace | 不等同于组织部门或客户群；接口字段 `tenantId` 仅表示根 Workspace ID |
 | 成员角色 | User 在某个 Workspace 中的 `manager`（对本级及全部下级 Workspace 及其中成员个人节点有 Own，管理成员与结构）或 `member`（在该 Workspace 下拥有个人节点，可被使用范围引用） | 不存在其他功能角色或可配置能力；成员身份本身不带来 Use |
-| Owner / 个人节点 | 主对象唯一的归属节点：Workspace W（团队数据）或成员个人节点 W/U（成员数据）；创建时选择，决定 Own，也是自动执行的代表 | Creator 只记录创建操作人用于审计；U 离开 W 后 W/U 的数据仍归 W/U、由 `manager` 管理，不移交、不随人走 |
+| Owner / 个人节点 | 主对象唯一的归属节点：Workspace W（团队数据）或成员个人节点 W/U（成员数据）；创建时选择，决定 Own，也是自动执行的代表 | Creator 只记录创建操作人用于审计；U 离开 W 后原 W/U 数据自动直接归属 W、由 W 及其上级的 `manager` 管理，无需人工移交、不随人转入其他 Workspace |
 | Own / Use | Own：本人是 Owner 节点或其任一上级的 `manager`，或 Owner 是本人仍所属 Workspace 下的本人个人节点；Use：拥有 Own 或命中使用范围；默认 Own 视角，Use 需显式切换 | 功能角色权限 |
 | 使用范围 | 实体可使用者的组合：指定 User、指定 Workspace（仅本级 / 含全部下级），为空表示仅 Owner；创建时显式指定或按业务类型默认写入并展示 | 成员身份；能力要求 |
 | 能力要求 | 资源声明的平台及版本、插件及版本、终端能力；只做兼容性校验，不兼容提示“无法执行” | 不是权限，不提示“无权限”；用户不配置 |
@@ -106,14 +106,14 @@ Sage 不消费 Seed，也不产生 Seed Dependency Assignment；后端能力缺�
 | 使用上下文 / 前置条件 | Workspace 管理者在 Sage 已建立可信登录并选定当前根 Workspace 后，管理本人担任 `manager`（含经上级继承）的 Workspace 及其全部下级；前置条件是 Mud 发布的 AccessContext、权限查询和错误恢复契约可用。 |
 | 触发事件 | 当需要创建下级 Workspace、在同一根内移动子树、调整成员及其 `manager` / `member` 角色，或由根 Workspace 管理者维护用户池、身份源、应用实例与凭据时。 |
 | 当前做法与困难 | 当前只能依据 Architecture 的目标合同与原始 AC 协作，本项目尚无覆盖该 Story 的独立 PRD/产品验收；在“Workspace 树与成员角色可维护”“越权与结构违规被拒绝”“高风险变更确认和审计可见”进入同一可复验闭环前仍缺少端到端证据。 |
-| 期望的可观察结果 | 可观察到：可浏览任意层级、并列分支的 Workspace 树，并在管理范围内维护成员、`manager` / `member` 角色与子树结构；越权、循环或跨根移动及移除最后一名根 `manager` 被拒绝并说明原因；高风险变更确认和审计可见；成员离开或停用后，其个人节点数据仍归原个人节点并由 `manager` 管理；用户池、身份源、应用实例与凭据入口只对根 Workspace 管理者呈现。 |
+| 期望的可观察结果 | 可观察到：可浏览任意层级、并列分支的 Workspace 树，并在管理范围内维护成员、`manager` / `member` 角色与子树结构；越权、循环或跨根移动及移除最后一名根 `manager` 被拒绝并说明原因；高风险变更确认和审计可见；成员离开 W 后，原 W/U 数据自动直接归属 W，并由 W 及其上级的 `manager` 管理，归属变更审计可见；仅停用而未撤销成员关系不触发归属变更；用户池、身份源、应用实例与凭据入口只对根 Workspace 管理者呈现。 |
 | 来源 / 证据 | Maia 既有需求输入，旧 ID `SAGE-001`；上游来源 `SAG-001/FND-001/002`；Maia USER_STORIES §2.1.1；场景证据：ARCHITECTURE.md §1–§4；未发现本 Story 的关联 PRD 或产品验收正文。 |
 
 **用户故事**：作为 Workspace 管理者，我希望管理 Workspace 树、成员角色与根级身份和应用。
 
 ### 约束与非目标
 
-- 必须保持的业务规则：成员角色只有 `manager` / `member`，不提供其他功能角色或能力配置；`manager` 的 Own 覆盖本级及全部下级 Workspace 及其中成员个人节点，`member` 在所属 Workspace 下拥有个人节点；下级 Workspace 只能由上级（含更上级）`manager` 创建，移动子树须同时是原上级和目标上级的 `manager`；结构变化只改变有效 `manager` 集合与上级链，不改写业务数据 Owner 与使用范围；User 停用或离开只改变状态，不删除 User 与数据，其个人节点数据不移交、不随人走；根 Workspace 至少保留 1 名启用的 `manager`；不得削弱下列行为验收。
+- 必须保持的业务规则：成员角色只有 `manager` / `member`，不提供其他功能角色或能力配置；`manager` 的 Own 覆盖本级及全部下级 Workspace 及其中成员个人节点，`member` 在所属 Workspace 下拥有个人节点；下级 Workspace 只能由上级（含更上级）`manager` 创建，移动子树须同时是原上级和目标上级的 `manager`；普通 Workspace 树结构调整只改变有效 `manager` 集合与上级链，不改写业务数据 Owner 与使用范围；User 停用或离开不删除 User 与数据；成员离开 W 时，原 W/U 数据自动直接归属 W，无需人工移交、不随人转入其他 Workspace；仅停用而未撤销成员关系不触发归属变更；根 Workspace 至少保留 1 名启用的 `manager`；不得削弱下列行为验收。
 - 外部约束：沿用上游来源 `SAG-001/FND-001/002` 及项目级策略。
 - 非目标：不包含原故事及 AC 未声明的产品或技术扩展；不提供跨根 Workspace 的共享、移动或合并。
 - 已知假设 / 待确认问题：本场景依据当前 Architecture、原始需求与已发现证据整理；未发现独立用户访谈。新增证据若改变使用者、前置条件或困难，应显式修订 Story 后再提升状态。
@@ -126,7 +126,7 @@ Sage 不消费 Seed，也不产生 Seed Dependency Assignment；后端能力缺�
 | US-001-AC-02 | 用户对目标 Workspace 不是有效 `manager`，或变更会造成循环、跨根移动、移除/降级/禁用最后一名根 `manager` | 发起对应结构或成员变更 | 服务端拒绝，界面展示拒绝原因且不残留本地变更 |
 | US-001-AC-03 | Workspace 管理者发起成员移除、角色降级或子树移动等高风险变更 | 提交变更 | 先展示影响并确认，确认与结果可在审计中查到 |
 | US-001-AC-04 | 当前用户是或不是当前根 Workspace 的 `manager` | 进入 Governance 工作区 | 仅根 Workspace 管理者可见并操作用户池（邀请、禁用、身份源同步）、应用实例与凭据入口；其他用户不展示入口，直接访问被服务端拒绝 |
-| US-001-AC-05 | 成员 U 已离开 Workspace W 或被停用，W/U 下仍有数据 | W 或其上级的 `manager` 与 U 分别查看这些数据 | 数据仍归 W/U，`manager` 有 Own 且来源标明直接或继承的 `manager`；U 不再有 Own；无需也不提示移交 |
+| US-001-AC-05 | 成员 U 已离开 Workspace W，原 W/U 下有数据 | W 或其上级的 `manager` 与 U 分别查看这些数据 | Owner 显示为 W，`manager` 有 Own 且来源标明直接或继承的 `manager`；U 不再因个人节点获得 Own；无需人工移交，自动归属变更的前后值与原因可查 |
 
 ## US-002 — 管理 Owner 与使用范围
 
@@ -146,7 +146,7 @@ Sage 不消费 Seed，也不产生 Seed Dependency Assignment；后端能力缺�
 ### 约束与非目标
 
 - 必须保持的业务规则：
-  - 归属：创建时显式选择 Owner 节点，界面默认当前所在 Workspace；`manager` 可选本 Workspace 或其下级，`member` 只能落到本人在所选 Workspace 下的个人节点；个人版用户落到其根 Workspace。Owner 只能由对原 Owner 与新 Owner 都有 Own 的人移交，并审计。
+  - 归属：创建时明确 Owner 节点，界面展示当前所在 Workspace；`manager` 创建的资源实体固定归属当前所在 Workspace，不能选择下级 Workspace，`member` 只能落到本人在所选 Workspace 下的个人节点；个人版用户落到其根 Workspace。主动移交 Owner 须对原 Owner 与新 Owner 都有 Own，并审计；成员离开时按上游规则自动从 W/U 归属 W，无需人工移交。
   - 使用范围：创建时确定（显式指定或按业务类型默认写入），默认值同样保存并展示；只有 Own 可修改且变更审计；设置者只能选择本人所属的 Workspace 或其下级，以及其中的 User。
 
     | 主对象 | 默认使用范围 | 允许的写法 |
@@ -165,11 +165,11 @@ Sage 不消费 Seed，也不产生 Seed Dependency Assignment；后端能力缺�
 
 | AC ID | Given | When | Then |
 |-------|-------|------|------|
-| US-002-AC-01 | 用户在当前所在 Workspace 中创建受控数据 | 选择归属节点并保存 | 归属默认当前 Workspace；`manager` 可选本 Workspace 或其下级，`member` 只能选择所选 Workspace 下本人的个人节点；保存后 Owner 唯一，越界归属被服务端拒绝 |
+| US-002-AC-01 | 用户在当前所在 Workspace 中创建受控数据 | 确认归属节点并保存 | `manager` 的 Owner 固定为当前所在 Workspace，界面不能选择下级 Workspace，提交下级 Workspace 作为 Owner 被服务端拒绝；`member` 只能选择所选 Workspace 下本人的个人节点；保存后 Owner 唯一，越界归属被服务端拒绝 |
 | US-002-AC-02 | 用户对某条数据具有有效 Own 或 Use | 查看该数据详情的权限说明 | 展示 Creator、Owner 与使用范围，并标明有效 Own/Use 来源为 Owner 节点（本人个人节点）、直接或继承的 `manager`（含经由的 Workspace），或命中的使用范围元素（指定 User、指定 Workspace 本级或含下级） |
 | US-002-AC-03 | 用户打开列表或发起导出 | 在 Own 与 Use 视角之间切换 | 默认 Own；Use 需显式切换；两者在查询、页面标签和导出中明确且不混合 |
 | US-002-AC-04 | 用户对数据有 Own；移交时对新 Owner 也有 Own | 调整使用范围或移交 Owner | 提交前展示影响；移交原因、前后 Owner 与前后使用范围记录并审计；被纳入使用范围者不获得 Own；无 Own 或对新 Owner 无 Own 的变更被拒绝 |
-| US-002-AC-05 | 数据 Owner 为成员个人节点 W/U | W 或其上级的 `manager` 查看或修改该数据 | `manager` 拥有 Own，来源标明直接或继承的 `manager`；U 仍是 W 成员时同样拥有 Own，离开 W 后不再拥有 Own，数据仍归 W/U |
+| US-002-AC-05 | 数据 Owner 为成员个人节点 W/U | W 或其上级的 `manager` 查看或修改该数据 | `manager` 拥有 Own，来源标明直接或继承的 `manager`；U 仍是 W 成员时同样拥有 Own，离开 W 后 Owner 自动从 W/U 改为 W，U 不再因个人节点获得 Own，归属变更记录审计 |
 | US-002-AC-06 | 用户创建或编辑受控数据 | 设置使用范围 | 展示按业务类型写入的默认值（Account、Terminal 仅 Owner；Task 仅 Owner 并可追加参与人；内容与定义在 Owner 为 Workspace 时为该 Workspace 及全部下级，为个人节点时仅 Owner）；只提供该类型允许的写法；可选 Workspace 与 User 限于本人所属 Workspace 或其下级及其中的 User，越界选择被服务端拒绝 |
 | US-002-AC-07 | 用户是某 Workspace 的 `member`，对一条数据既无 Own 也未被其使用范围命中 | 在 Use 视角查找或直接访问该数据 | 数据不出现，直接访问被服务端拒绝；成员身份本身不带来 Use |
 
@@ -486,7 +486,7 @@ Sage 不消费 Seed，也不产生 Seed Dependency Assignment；后端能力缺�
 
 ### 约束与非目标
 
-- 必须保持的业务规则：保持原故事的使用者、范围、状态与授权语义；有效 Own 由 Owner 节点与 `manager` 结构决定，Use 为 Own 或命中使用范围；Workspace 结构或成员变化不改写业务数据 Owner 与使用范围；不得削弱下列行为验收。
+- 必须保持的业务规则：保持原故事的使用者、范围、状态与授权语义；有效 Own 由 Owner 节点与 `manager` 结构决定，Use 为 Own 或命中使用范围；普通 Workspace 树结构调整不改写业务数据 Owner 与使用范围；成员离开 W 时，原 W/U 数据自动直接归属 W，已保存的使用范围不重置；不得削弱下列行为验收。
 - 外部约束：沿用上游来源 `FND-007~011` 及项目级策略。
 - 非目标：不包含原故事及 AC 未声明的产品或技术扩展。
 - 已知假设 / 待确认问题：本场景依据当前 Architecture、原始需求与已发现证据整理；未发现独立用户访谈。新增证据若改变使用者、前置条件或困难，应显式修订 Story 后再提升状态。
@@ -495,7 +495,7 @@ Sage 不消费 Seed，也不产生 Seed Dependency Assignment；后端能力缺�
 
 | AC ID | Given | When | Then |
 |-------|-------|------|------|
-| US-012-AC-01 | 该 Story 所需业务前置条件成立 | Workspace 管理者发起“预览权限变更影响”对应操作 | 展示Owner、有效 Own/Use 及其权限来源、使用范围和关联对象；成员角色或结构变更时展示受影响 User 的有效 `manager` 范围与使用范围命中变化 |
+| US-012-AC-01 | 该 Story 所需业务前置条件成立 | Workspace 管理者发起“预览权限变更影响”对应操作 | 展示Owner、有效 Own/Use 及其权限来源、使用范围和关联对象；成员角色或结构变更时展示受影响 User 的有效 `manager` 范围与使用范围命中变化；移除成员 U 时同时展示原 W/U 数据将直接归属 W |
 | US-012-AC-02 | 该 Story 所需业务前置条件成立 | Workspace 管理者发起“预览权限变更影响”对应操作 | preview 版本过期拒绝提交 |
 | US-012-AC-03 | 该 Story 所需业务前置条件成立 | Workspace 管理者发起“预览权限变更影响”对应操作 | 导出同 scope |
 
