@@ -1,6 +1,6 @@
 # maia-sage
 
-管理 SPA 与 Iris Chat 入口，消费服务端的授权、状态和命令契约。
+管理 SPA 与 Iris Chat 入口，依据服务端契约展示授权和业务状态，并提交业务命令。
 
 技术栈：TypeScript / Vue 3 / Vite；Node.js 用于构建工具链；具体版本见[技术栈基线](../docs/architecture/technology-stack.md)。
 

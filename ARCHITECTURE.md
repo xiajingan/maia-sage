@@ -14,15 +14,15 @@ Sage 组合业务所有者的查询/命令/事件，不承载领域状态机、�
 
 各服务 OpenAPI/事件 Schema 是机器契约来源，client 按服务分包并锁定发布版本；构建和消费者契约检测不兼容变更，不手写重复 DTO。页面展示有效权限来源、Owner/使用范围及本次操作影响，具体字段和允许写法引用[权限模型](../docs/product/constraints/permission-model.md)，不在前端重建权限图。
 
-浏览器消费同源 `/api/*`，作为 OIDC 公共客户端采用授权码 + PKCE，access token 仅内存并以 Bearer 发送，不持有服务身份或另建 BFF 会话。根切换重新授权；服务校验 token 和当前 User/撤销事实，页面缓存不是权限。入口路由和运行配置见[部署设计](../docs/DEPLOYMENT.md)，不在本文复制 Ingress/ClusterIP 拓扑。
+浏览器通过同源 `/api/*` 调用服务接口，作为 OIDC 公共客户端采用授权码 + PKCE，access token 仅内存并以 Bearer 发送，不持有服务身份或另建 BFF 会话。根切换重新授权；服务校验 token 和当前 User/撤销事实，页面缓存不是权限。入口路由和运行配置见[部署设计](../docs/DEPLOYMENT.md)，不在本文复制 Ingress/ClusterIP 拓扑。
 
 ## 3. 交互适配
 
-按动作已有业务语义分别处理管理变更确认、任务提交人确认和 Tea 审核。需要影响预览的场景消费真实所有者的结果；第一片账号范围预览和动作保存定义比较分别遵守[管理端 §2～3](../docs/architecture/management-ui-contracts.md#2-账号范围预览)，不固定跨服务统一 preview DTO，也不将所有创建/取消强制放进同一审批流程。
+按动作已有业务语义分别处理管理变更确认、任务提交人确认和 Tea 审核。需要影响预览的场景展示资源所属服务返回的预览结果；第一片账号范围预览和动作保存定义比较分别遵守[管理端 §2～3](../docs/architecture/management-ui-contracts.md#2-账号范围预览)，不固定跨服务统一 preview DTO，也不将所有创建/取消强制放进同一审批流程。
 
 各 feature adapter 保存本次操作输入版本和关联，遇到未知响应先查原操作；错误呈现安全分类、影响、当前有权的恢复动作和关联 ID。Confirmation 绑定和一次消费引用[任务提交契约](../docs/architecture/task-execution.md#2-提交快照与确认)，Iris 卡片关联同一事实，Tea 已审核发送不加第二关。
 
-Action 编辑消费 Mud 发布的 Operation/Action Schema；Workflow 编辑仅在对应业务恢复后采用。试用、推广和退回展示服务端版本与影响，不自行重建通用发布状态机。
+Action 编辑器使用 Mud 发布的 Operation/Action Schema；Workflow 编辑仅在对应业务恢复后采用。试用、推广和退回展示服务端版本与影响，不自行重建通用发布状态机。
 
 ### 3.1 信息架构
 
@@ -42,7 +42,7 @@ Action 编辑消费 Mud 发布的 Operation/Action Schema；Workflow 编辑仅�
 
 Server state 使用 query cache，以 resource version/cursor 更新；编辑草稿用局部 form state；长 Run 使用 EventLog projection；用户/当前根为独立 session state，不将四类状态塞进全局 store。query/form/event 按根/User/对象隔离，切换或失权时清理，迟到响应不能恢复旧内容；版本与流恢复见[管理端 §4](../docs/architecture/management-ui-contracts.md#4-根切换与状态恢复)。
 
-路由 meta 只优化入口体验；列表、详情、已有导出和证据链接消费服务端实际 scope 与权限来源。事件 adapter 按服务版本/序号更新事实，轮询仅作同源事实的降级；已消费确认不能被页面恢复重新提交。
+路由 meta 只用于优化入口体验；列表、详情、已有导出和证据链接，均以服务端返回的实际 scope 与权限来源为依据。事件 adapter 按服务版本/序号更新事实，轮询仅作同源事实的降级；已消费确认不能被页面恢复重新提交。
 
 ### 3.3 可维护性、性能与安全
 
