@@ -20,9 +20,7 @@ defineProps<{
         >M</span><span>Maia</span>
       </div>
       <button
-        v-if="
-          controller?.state.session || controller?.state.phase === 'loading'
-        "
+        v-if="controller?.state.canLogout"
         @click="controller.logout()"
       >
         退出登录
@@ -68,6 +66,11 @@ defineProps<{
           <p role="status">
             正在核实原会话已撤销…
           </p>
+          <div>
+            <button @click="controller.signIn()">
+              重新登录
+            </button>
+          </div>
         </template>
         <template v-else-if="controller.state.phase === 'logout-unknown'">
           <h1>本机已退出</h1>

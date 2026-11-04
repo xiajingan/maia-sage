@@ -33,6 +33,8 @@ pnpm check:browser
 
 `preview`使用同样的进程配置接口，复用已构建dist；运行时公开配置不会写入dist。独立E2E可设置SAGE_PORT=16443、独立SAGE_PUBLIC_CONFIG和SAGE_MUD_TARGET=http://127.0.0.1:11600，不覆盖demo配置。公开文件仅含issuer/clientId/redirectUri/apiBaseUrl/version，URL必须与进程公开HTTPS同源。
 
+读取服务失败时仍可退出。退出核实请求10秒超时后提示待核实，保留原操作供重试；核实中也可重新登录。
+
 浏览器检查使用本机Chrome与临时独立上下文，默认输出安全截图到 `/tmp/maia-sage-ui`。可用 `SAGE_CHROME`、`SAGE_BROWSER_ORIGIN`、`SAGE_SCREENSHOTS` 指定测试路径和地址。脚本会在实际本地Mud注册新账号，不重置DB。真实主路径与route故障注入分开记录，不保存token/密码/trace/HAR。
 
 ## 阅读入口

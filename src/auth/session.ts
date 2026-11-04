@@ -10,13 +10,17 @@ export interface Oidc {
   callback(url: string): Promise<Credentials>;
   clear(preserveAuthorizationState?: boolean): void;
 }
+export const LOGOUT_TIMEOUT_MS = 10_000;
 export interface Api {
   session(token: string): Promise<GetSessionResponse>;
   members(token: string, workspaceId: string): Promise<ListMembersResponse>;
-  logout(input: {
-    idTokenHint: string;
-    logoutRequestId: string;
-  }): Promise<void>;
+  logout(
+    input: {
+      idTokenHint: string;
+      logoutRequestId: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<void>;
 }
 export type Phase =
   | "signed-out"
@@ -35,6 +39,7 @@ export type SessionState = {
   message?: string;
   requestId?: string;
   canReload?: boolean;
+  canLogout: boolean;
 };
 export class ApiFailure extends Error {
   constructor(
@@ -51,7 +56,10 @@ export function createSessionController({
   oidc: Oidc;
   api: Api;
 }) {
-  const state = shallowReactive<SessionState>({ phase: "signed-out" });
+  const state = shallowReactive<SessionState>({
+    phase: "signed-out",
+    canLogout: false,
+  });
   let epoch = 0;
   let credentials: Credentials | undefined;
   const reset = (phase: Phase) => {
@@ -61,9 +69,11 @@ export function createSessionController({
     state.message = undefined;
     state.requestId = undefined;
     state.canReload = Boolean(credentials);
+    state.canLogout = Boolean(credentials);
   };
   async function callback(url: string) {
     const current = ++epoch;
+    activeLogout?.abort();
     operation = undefined;
     pending = false;
     credentials = undefined;
@@ -136,10 +146,12 @@ export function createSessionController({
       }
     | undefined;
   let pending = false;
+  let activeLogout: AbortController | undefined;
   async function signIn(restore = false) {
     if (state.phase === "authenticating") return;
     const current = ++epoch;
     credentials = undefined;
+    activeLogout?.abort();
     operation = undefined;
     pending = false;
     oidc.clear();
@@ -182,8 +194,17 @@ export function createSessionController({
     }
     pending = true;
     state.phase = "logout-pending";
+    const abort = new AbortController();
+    activeLogout = abort;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        abort.abort();
+        reject(new ApiFailure(0));
+      }, LOGOUT_TIMEOUT_MS);
+    });
     try {
-      await api.logout(op.input);
+      await Promise.race([api.logout(op.input, abort.signal), timeout]);
       if (op.epoch === epoch) {
         operation = undefined;
         reset("signed-out");
@@ -195,12 +216,15 @@ export function createSessionController({
         state.message = "本机已退出，会话撤销待核实。请重试核实。";
       }
     } finally {
+      clearTimeout(timer);
+      if (activeLogout === abort) activeLogout = undefined;
       if (op.epoch === epoch) pending = false;
     }
   }
   function dispose() {
     ++epoch;
     credentials = undefined;
+    activeLogout?.abort();
     operation = undefined;
     pending = false;
     oidc.clear(true);

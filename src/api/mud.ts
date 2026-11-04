@@ -14,7 +14,7 @@ import {
 } from "maia-mud-client/schemas";
 import { Check } from "typebox/value";
 import type { TSchema } from "typebox";
-import { ApiFailure, type Api } from "../auth/session";
+import { ApiFailure, LOGOUT_TIMEOUT_MS, type Api } from "../auth/session";
 export function createMudApi(baseUrl: string): Api {
   const client = createClient({ baseUrl });
   function read<T>(
@@ -49,9 +49,14 @@ export function createMudApi(baseUrl: string): Api {
         MembersViewSchema,
       );
     },
-    async logout(input) {
+    async logout(input, signal) {
       read(
-        await logout({ client, credentials: "same-origin", body: input }),
+        await logout({
+          client,
+          credentials: "same-origin",
+          body: input,
+          signal: signal ?? AbortSignal.timeout(LOGOUT_TIMEOUT_MS),
+        }),
         LogoutViewSchema,
       );
     },

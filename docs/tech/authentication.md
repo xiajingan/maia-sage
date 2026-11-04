@@ -17,9 +17,9 @@
 
 access/ID token仅在controller闭包内存。短期state/verifier/nonce只在当前标签页 `sage.oidc.` 前缀sessionStorage，600秒过期，回调成功/失败删除原操作；清理不碰其他前缀。离页立即丢弃内存会话与退出操作，但保留短期PKCE，以支持导航到认证页后返回。再次主动登录先清旧协议状态。OidcClient没有UserStore或令牌缓存，代次过期的底层完成结果不能恢复身份，也不能清除新授权的协议状态。
 
-每次登录/回调/退出/失权推进epoch。查询、回调、登录失败、退出结果均比较epoch后再写页面。401清空资料并引导登录；403/404清空资料并显示无权；503/网络/非法响应显示安全错误和可重试；仅成员失败保留已验证空间资料并显式降级，缺数据不显示零成员。关联编号只显示owner错误Schema中的requestId，不呈现异常全文或内部code。
+每次登录/回调/退出/失权推进epoch。查询、回调、登录失败、退出结果均比较epoch后再写页面。已持有凭据的正常、加载、降级及读取错误状态通过canLogout明确保留退出操作；只有清除本机凭据后隐藏退出。401清空资料并引导登录；403/404清空资料并显示无权；503/网络/非法响应显示安全错误和可重试；仅成员失败保留已验证空间资料并显式降级，缺数据不显示零成员。关联编号只显示owner错误Schema中的requestId，不呈现异常全文或内部code。
 
-退出立即清access和私有资料，原ID token仅保留在当前内存退出操作，与随机requestId固定。未知结果显示“本机已退出，会话撤销待核实”，600秒内只重试原输入。新登录、回调或离页丢弃原操作；晚到结果不能影响新会话。端点cookie行为由Mud负责。
+退出立即清access和私有资料，原ID token仅保留在当前内存退出操作，与随机requestId固定。未知结果显示“本机已退出，会话撤销待核实”，600秒内只重试原输入。退出请求10秒超时并传递AbortSignal，中断网络后进入待核实；controller本身以有界race覆盖不响应abort的传输。中断不能证明服务端未执行，因此保留原hint/requestId，不新建撤销操作。pending页可重新登录，主动登录/回调/离页会中断原请求，旧结果通过epoch丢弃。新登录、回调或离页丢弃原操作；晚到结果不能影响新会话。端点cookie行为由Mud负责。
 
 ## 视觉及可访问性
 
@@ -27,7 +27,7 @@ access/ID token仅在controller闭包内存。短期state/verifier/nonce只在�
 
 自检：初稿原本可用多张统计卡，但本片只有本人及成员事实，已改为单一标题区域和表格。层级用于解释空间与成员，不增加虚构统计。颜色、字级、间距、圆角、边框和焦点等集中于 `src/styles/tokens.css`。布局在40rem切换，小屏账号和长空间名换行。语义标题、table/th、状态区、跳转链接、可见焦点及原生按钮保持键盘路径；无自动动画。空列表说明暂未读取并提供核对操作，不把失败伪装为空。
 
-原型通过 `pnpm prototype` 把同一tokens和布局CSS嵌入 `docs/prototypes/personal-workspace.html`，可直接打开，含八种可切换状态。`pnpm check:prototype` 防止源样式与单文件分叉。原型只使用示例账号，不调用真实接口。
+原型通过 `pnpm prototype` 把同一tokens和布局CSS嵌入 `docs/prototypes/personal-workspace.html`，可直接打开，含九种可切换状态。`pnpm check:prototype` 防止源样式与单文件分叉。原型只使用示例账号，不调用真实接口。
 
 ## 验证边界
 

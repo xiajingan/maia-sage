@@ -31,3 +31,32 @@ test("真实生成client消费owner schema，拒绝错误role与未知响应且�
     vi.restoreAllMocks();
   }
 });
+// TC-SAGE-001
+test("退出传递AbortSignal给真实生成client，可终止未返回的网络请求", async () => {
+  let observed: AbortSignal | undefined;
+  const fetch = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async (input) => {
+      observed = (input as Request).signal;
+      return new Promise((_, reject) => {
+        observed?.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      });
+    });
+  try {
+    const abort = new AbortController();
+    const pending = createMudApi("https://localhost").logout(
+      { idTokenHint: "test-hint", logoutRequestId: "abcdefghijklmnopqrstuv" },
+      abort.signal,
+    );
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+    abort.abort();
+    expect(observed?.aborted).toBe(true);
+    await expect(pending).rejects.toThrow();
+  } finally {
+    vi.restoreAllMocks();
+  }
+});

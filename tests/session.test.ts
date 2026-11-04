@@ -1,5 +1,9 @@
 import { expect, test, vi } from "vitest";
-import { ApiFailure, createSessionController } from "../src/auth/session";
+import {
+  ApiFailure,
+  createSessionController,
+  type Api,
+} from "../src/auth/session";
 import type { GetSessionResponse } from "maia-mud-client";
 const facts: GetSessionResponse = {
   rootWorkspace: { id: "1", name: "我的个人空间" },
@@ -26,7 +30,7 @@ const api = () => ({
     items: [{ userId: "2", loginName: "lili", role: "manager" as const }],
     nextCursor: null,
   })),
-  logout: vi.fn(async () => {}),
+  logout: vi.fn<Api["logout"]>(async () => {}),
 });
 // TC-SAGE-001
 test("退出后完成的旧查询不能恢复个人信息", async () => {
@@ -77,9 +81,9 @@ test("未知退出重试固定原操作，主动登录丢弃原操作", async ()
   await c.callback("callback");
   await c.logout();
   expect(c.state.phase).toBe("logout-unknown");
-  const input = a.logout.mock.calls[0];
+  const input = a.logout.mock.calls[0]?.[0];
   await c.retryLogout();
-  expect(a.logout.mock.calls[1]).toEqual(input);
+  expect(a.logout.mock.calls[1]?.[0]).toEqual(input);
   await c.signIn();
   await c.retryLogout();
   expect(a.logout).toHaveBeenCalledTimes(2);
@@ -171,4 +175,63 @@ test("离页销毁内存会话但保留短期PKCE以完成顶层授权", async (
   c.dispose();
   expect(c.state.session).toBeUndefined();
   expect(o.clear).toHaveBeenLastCalledWith(true);
+});
+// TC-SAGE-001
+test.each([new ApiFailure(503), new Error("network"), new ApiFailure(0)])(
+  "已认证读取错误仍可主动退出并撤销原会话",
+  async (error) => {
+    const a = api();
+    a.session.mockRejectedValueOnce(error);
+    const c = createSessionController({ oidc: oidc(), api: a });
+    await c.callback("callback");
+    expect(c.state.phase).toBe("error");
+    expect(c.state.canLogout).toBe(true);
+    await c.logout();
+    expect(a.logout).toHaveBeenCalledTimes(1);
+    expect(c.state.phase).toBe("signed-out");
+    expect(c.state.canLogout).toBe(false);
+  },
+);
+// TC-SAGE-001
+test("不结算的退出在10秒后进入待核实，保留原操作重试", async () => {
+  vi.useFakeTimers();
+  try {
+    const a = api();
+    a.logout.mockReturnValueOnce(new Promise(() => {}));
+    const c = createSessionController({ oidc: oidc(), api: a });
+    await c.callback("callback");
+    const leaving = c.logout();
+    expect(c.state.phase).toBe("logout-pending");
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(c.state.phase).toBe("logout-unknown");
+    await leaving;
+    const original = a.logout.mock.calls[0];
+    await c.retryLogout();
+    expect(c.state.phase).toBe("signed-out");
+    expect(a.logout.mock.calls[1]?.[0]).toEqual(original?.[0]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+// TC-SAGE-001
+test("超时退出的晚到结果不能影响新登录或重试旧操作", async () => {
+  vi.useFakeTimers();
+  try {
+    const late = deferred<void>();
+    const a = api();
+    a.logout.mockReturnValueOnce(late.promise);
+    const c = createSessionController({ oidc: oidc(), api: a });
+    await c.callback("first");
+    const leaving = c.logout();
+    await vi.advanceTimersByTimeAsync(10000);
+    await leaving;
+    await c.callback("new");
+    late.resolve();
+    await Promise.resolve();
+    await c.retryLogout();
+    expect(c.state.phase).toBe("ready");
+    expect(a.logout).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
 });

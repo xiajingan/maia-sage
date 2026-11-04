@@ -168,7 +168,14 @@ try {
   ).toBeVisible();
   await screenshot("error");
   await page.unroute(session);
-  await page.getByRole("button", { name: "重试读取", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "退出登录", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "你的个人工作空间" }),
+  ).toBeVisible();
+  await login();
   await expect(
     page.getByRole("cell", { name: "管理者", exact: true }),
   ).toBeVisible();
@@ -239,23 +246,39 @@ try {
   let original;
   await page.route("**/api/mud/auth/logout", async (route) => {
     original = JSON.parse(route.request().postData());
-    await route.abort();
+    // Leave the request unhandled: simulate a connection that never settles.
   });
   await page.getByRole("button", { name: "退出登录" }).click();
   await expect(page.getByRole("heading", { name: "本机已退出" })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "重试核实退出" }),
+    page.getByRole("button", { name: "重新登录", exact: true }),
   ).toBeVisible();
+  await screenshot("logout-pending");
+  await expect(page.getByRole("button", { name: "重试核实退出" })).toBeVisible({
+    timeout: 15000,
+  });
   await screenshot("logout-unknown");
   await page.unroute("**/api/mud/auth/logout");
-  page.on("request", (r) => {
+  const checkRetry = (r) => {
     if (new URL(r.url()).pathname.endsWith("/auth/logout"))
       assert(
         JSON.parse(r.postData()).idTokenHint === original.idTokenHint &&
           JSON.parse(r.postData()).logoutRequestId === original.logoutRequestId,
       );
-  });
+  };
+  page.on("request", checkRetry);
   await page.getByRole("button", { name: "重试核实退出" }).click();
+  await expect(
+    page.getByRole("heading", { name: "你的个人工作空间" }),
+  ).toBeVisible();
+  page.off("request", checkRetry);
+  await login();
+  await page.route("**/api/mud/auth/logout", () => {});
+  await page.getByRole("button", { name: "退出登录" }).click();
+  await expect(page.getByRole("status")).toContainText("正在核实原会话已撤销");
+  await login("重新登录");
+  await page.unroute("**/api/mud/auth/logout");
+  await page.getByRole("button", { name: "退出登录" }).click();
   await expect(
     page.getByRole("heading", { name: "你的个人工作空间" }),
   ).toBeVisible();
@@ -297,7 +320,9 @@ try {
         "error",
         "forbidden",
         "mobile-long",
-        "unknown logout retry",
+        "logout timeout/retry",
+        "pending re-login",
+        "authenticated error logout",
         "invalid config",
       ],
       screenshots: output,

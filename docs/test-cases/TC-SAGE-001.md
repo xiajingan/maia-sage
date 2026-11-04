@@ -20,8 +20,8 @@ US-001-AC-01：首次密码登录进入自己的个人根，成员只有本人�
 1. 打开Sage，使用认证页注册，确认密码被清空；输入密码登录。直接显示服务端空间名、本人和管理者，无虚构统计或未来入口。
 2. 刷新页面顶层恢复登录，不要求prompt login。退出撤销后旧access请求401；主动重新输入同账号后根/User一致。
 3. 退出时旧查询、旧callback、旧登录失败或旧退出结果迟到，页面不恢复旧资料，不覆盖新会话；重复点击去重。
-4. 退出结果未知时本机立即清资料并提示待核实；重试固定原hint/requestId，重新登录或离页后不重试旧操作。
-5. 401清资料并登录入口；403清资料并显示无权及关联编号；503显示可重试安全错误；仅成员失败保留空间、显示降级，不用空表掩盖错误。
+4. 退出请求不结算时10秒内中断并进入待核实；pending页可直接重新登录，晚到结果不能影响新会话。退出结果未知时本机立即清资料并提示待核实；重试固定原hint/requestId，重新登录或离页后不重试旧操作。
+5. 已认证的503/网络/无效响应读取错误页仍显示退出，可撤销原会话；401清资料并登录入口；403清资料并显示无权及关联编号；503显示可重试安全错误；仅成员失败保留空间、显示降级，不用空表掩盖错误。
 6. 空列表提供核对操作；加载保留布局；375px小屏与长文本不产生横向溢出；跳转链接和按钮键盘可达。
 7. 非法/缺失/跨源运行配置拒绝打开业务；非法state/nonce/签名/issuer/audience/过期/缺sid不能进入空间；owner Schema无效响应拒绝呈现，无动态Function。
 8. 令牌不进入localStorage/sessionStorage；短期PKCE经过认证导航仍可回调，结束后清理自身前缀，不动其他存储；回调code从地址栏删除。
@@ -31,7 +31,8 @@ US-001-AC-01：首次密码登录进入自己的个人根，成员只有本人�
 - `tests/session.test.ts`：controller查询/登录/回调/退出交错与状态恢复。
 - `tests/boundaries.test.ts`：公共配置与真实RS256 JWS异常。
 - `tests/oidc.test.ts`：实际oidc-client-ts的state/nonce、PKCE/顶层恢复与存储。
-- `tests/client.test.ts`：真实client与owner Schema无eval消费者。
+- `tests/app.test.ts`：真实Vue组件渲染检查已认证错误页退出和pending重新登录入口。
+- `tests/client.test.ts`：真实client与owner Schema无eval消费者、AbortSignal透传。
 - `scripts/browser-check.mjs`：先检查真实DOM再使用语义定位；真实Mud注册/登录/刷新/撤销/同根重登；独立标注的UI故障注入与截图。
 
 ## 证据归属
