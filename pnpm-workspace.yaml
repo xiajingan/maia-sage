@@ -1,0 +1,10 @@
+overrides:
+  "@vue/compiler-core": 3.5.43
+  "@vue/compiler-dom": 3.5.43
+  "@vue/shared": 3.5.43
+  "@vue/reactivity": 3.5.43
+  "@vue/runtime-core": 3.5.43
+  "@vue/runtime-dom": 3.5.43
+  "@vue/server-renderer": 3.5.43
+  "@vue/compiler-ssr": 3.5.43
+  "@typescript-eslint/parser": 8.70.0
