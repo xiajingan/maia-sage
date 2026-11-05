@@ -1,0 +1,403 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Maia 终端 · 交互原型</title><style>/* Generated from src/styles: pnpm prototype */
+:root {
+  --color-page: #edf2f7;
+  --color-surface: #ffffff;
+  --color-ink: #182f48;
+  --color-muted: #52677d;
+  --color-line: #cedae6;
+  --color-action: #164f8a;
+  --color-action-hover: #103e6e;
+  --color-soft: #e6eff8;
+  --color-success: #236449;
+  --color-warning: #795010;
+  --color-warning-bg: #fff5df;
+  --color-danger: #973d43;
+  --font-body: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-heading: "Songti SC", "STSong", serif;
+  --text-small: 0.875rem;
+  --text-body: 1rem;
+  --text-section: 1.25rem;
+  --text-title: clamp(1.8rem, 4vw, 2.75rem);
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-strong: 650;
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  --radius-control: 0.375rem;
+  --radius-panel: 0.75rem;
+  --radius-pill: 2rem;
+  --line-thin: 1px;
+  --line-accent: 4px;
+  --focus-width: 3px;
+  --focus-offset: 3px;
+  --content-width: 70rem;
+  --reading-width: 42rem;
+  --control-height: 2.75rem;
+  --header-height: 5rem;
+  --line-body: 1.7;
+  --line-heading: 1.25;
+  --opacity-muted: 0.6;
+  --z-skip: 10;
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: var(--space-0);
+  background: var(--color-page);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-body);
+  line-height: var(--line-body);
+}
+button,
+a {
+  font: inherit;
+}
+button {
+  min-height: var(--control-height);
+  padding: var(--space-2) var(--space-5);
+  border: var(--line-thin) solid var(--color-line);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-action);
+  cursor: pointer;
+  font-weight: var(--weight-medium);
+}
+button.primary {
+  background: var(--color-action);
+  border-color: var(--color-action);
+  color: var(--color-surface);
+}
+button:hover:not(:disabled) {
+  border-color: var(--color-action);
+}
+button.primary:hover:not(:disabled) {
+  background: var(--color-action-hover);
+}
+button:disabled {
+  opacity: var(--opacity-muted);
+  cursor: wait;
+}
+:focus-visible {
+  outline: var(--focus-width) solid var(--color-action);
+  outline-offset: var(--focus-offset);
+}
+h1,
+h2,
+p {
+  margin: var(--space-0);
+}
+h1 {
+  font-family: var(--font-heading);
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  line-height: var(--line-heading);
+  overflow-wrap: anywhere;
+}
+h2 {
+  font-size: var(--text-section);
+  line-height: var(--line-heading);
+}
+p {
+  max-width: var(--reading-width);
+}
+.skip {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-4);
+  transform: translateY(-200%);
+  z-index: var(--z-skip);
+  background: var(--color-surface);
+}
+.skip:focus {
+  transform: none;
+}
+.topbar {
+  background: var(--color-surface);
+  border-bottom: var(--line-thin) solid var(--color-line);
+}
+.topbar-inner {
+  max-width: var(--content-width);
+  min-height: var(--header-height);
+  margin: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+}
+.brand {
+  font-size: var(--text-section);
+  font-weight: var(--weight-strong);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.brand-mark {
+  border: var(--line-thin) solid var(--color-action);
+  border-radius: var(--radius-control);
+  padding: var(--space-1) var(--space-3);
+  color: var(--color-action);
+}
+main {
+  max-width: var(--content-width);
+  margin: auto;
+  padding: var(--space-7) var(--space-6) var(--space-8);
+}
+.intro {
+  padding: var(--space-5) var(--space-0) var(--space-7);
+  border-left: var(--line-accent) solid var(--color-action);
+  padding-left: var(--space-5);
+}
+.intro p {
+  color: var(--color-muted);
+  margin-top: var(--space-4);
+}
+.context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+.pill {
+  font-size: var(--text-small);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--color-soft);
+  color: var(--color-action);
+}
+.panel {
+  background: var(--color-surface);
+  border: var(--line-thin) solid var(--color-line);
+  border-radius: var(--radius-panel);
+  overflow: hidden;
+}
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
+  border-bottom: var(--line-thin) solid var(--color-line);
+}
+.muted {
+  color: var(--color-muted);
+  font-size: var(--text-small);
+}
+.table-scroll {
+  overflow-x: auto;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  text-align: left;
+}
+th {
+  font-weight: var(--weight-medium);
+  font-size: var(--text-small);
+  color: var(--color-muted);
+  background: var(--color-page);
+}
+th,
+td {
+  padding: var(--space-4) var(--space-6);
+  border-bottom: var(--line-thin) solid var(--color-line);
+  overflow-wrap: anywhere;
+}
+tbody tr:last-child td {
+  border-bottom: none;
+}
+.member-name {
+  font-weight: var(--weight-strong);
+}
+.self {
+  margin-left: var(--space-3);
+  font-size: var(--text-small);
+  color: var(--color-muted);
+}
+.role {
+  color: var(--color-success);
+}
+.notice {
+  padding: var(--space-5) var(--space-6);
+  display: grid;
+  gap: var(--space-4);
+}
+.notice.warning {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+.landing {
+  padding: var(--space-7);
+  display: grid;
+  gap: var(--space-5);
+}
+.skeleton {
+  min-height: var(--control-height);
+  background: var(--color-soft);
+  border-radius: var(--radius-control);
+  margin: var(--space-4) var(--space-6);
+}
+.footnote {
+  margin-top: var(--space-5);
+  color: var(--color-muted);
+  font-size: var(--text-small);
+}
+@media (max-width: 40rem) {
+  .topbar-inner {
+    padding: var(--space-3) var(--space-4);
+    flex-wrap: wrap;
+  }
+  main {
+    padding: var(--space-6) var(--space-4);
+  }
+  .intro {
+    padding-bottom: var(--space-5);
+  }
+  .panel-heading,
+  .notice,
+  .landing {
+    padding: var(--space-5);
+  }
+  th,
+  td {
+    padding: var(--space-3);
+  }
+  .self {
+    display: block;
+    margin-left: var(--space-0);
+  }
+}
+
+.workspace-nav,
+.terminal-actions,
+.terminal-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.workspace-nav {
+  margin-bottom: var(--space-5);
+}
+.workspace-nav button[aria-current="page"] {
+  border-color: var(--color-action);
+  background: var(--color-soft);
+}
+.terminal-heading {
+  flex-wrap: wrap;
+}
+.terminal-list {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-5);
+}
+.terminal-card {
+  border: var(--line-thin) solid var(--color-line);
+  border-radius: var(--radius-control);
+  padding: var(--space-5);
+  overflow-wrap: anywhere;
+}
+.terminal-title h3,
+.terminal-facts dd {
+  margin: var(--space-0);
+}
+.terminal-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-6);
+  margin: var(--space-4) var(--space-0);
+}
+.terminal-facts dt {
+  color: var(--color-muted);
+  font-size: var(--text-small);
+}
+.terminal-capabilities {
+  margin: var(--space-0);
+  padding-left: var(--space-4);
+}
+.terminal-eligibility {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+}
+.terminal-dialog {
+  color: var(--color-ink);
+  max-width: min(var(--reading-width), calc(100% - var(--space-6)));
+  padding: var(--space-0);
+  overflow: auto;
+}
+.activation-code {
+  border-radius: var(--radius-control);
+  background: var(--color-soft);
+  padding: var(--space-3);
+  font-family: monospace;
+  font-size: var(--text-section);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+</style></head><body>
+<a class="skip" href="#main">跳到主要内容</a><header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark" aria-hidden="true">M</span><span>Maia</span></div><button id="logout">退出登录</button></div></header>
+<main id="main" tabindex="-1">
+<nav class="workspace-nav" aria-label="工作空间"><button id="workspace">个人工作空间</button><button aria-current="page">终端</button></nav>
+<section class="intro"><h1>终端</h1><p>接入装有 Celt 的 Windows 电脑，查看连接、版本和本机能力。</p></section>
+<p class="footnote">原型仅展示示例数据。 <label>预览状态 <select id="state"><option value="ready">在线</option><option value="offline">离线</option><option value="low">低版本</option><option value="unknown">待确认</option><option value="empty">空</option><option value="loading">加载</option><option value="error">错误</option><option value="degraded">降级</option></select></label></p>
+<section class="panel" aria-labelledby="terminals-title">
+<div class="panel-heading terminal-heading"><h2 id="terminals-title">已接入终端</h2><button class="primary" id="add">添加终端</button></div>
+<div id="view"></div><div class="notice terminal-actions"><button id="refresh">刷新终端</button></div>
+</section>
+<dialog id="dialog" class="panel terminal-dialog" aria-labelledby="terminal-dialog-title"><div class="notice">
+<h2 id="terminal-dialog-title">添加终端</h2><p>在要接入的电脑上打开 Celt，并输入这个一次性激活码。</p><div id="activation"></div>
+<div class="terminal-actions"><button id="close" autofocus>关闭</button><button class="primary" id="renew" hidden>重新生成</button></div></div></dialog>
+</main><script>
+const byId=(id)=>document.getElementById(id);
+const seen='<time datetime="2026-11-05T08:00:00.000Z">2026年11月5日 16:00:00</time>';
+function card(state){
+  const unknown=state==='unknown', offline=state==='offline', low=state==='low';
+  const facts=[['连接状态',unknown?'待确认':offline?'离线':'在线'],['最后在线',unknown?'待确认':seen],['Celt 版本',unknown?'待确认':low?'0.1.0':'0.2.0'],['Windows 版本',unknown?'待确认':'Windows 11'],['本机能力',unknown?'待确认':'<ul class="terminal-capabilities"><li>发送文本消息</li></ul>']];
+  const warning=offline||low?'<p class="notice warning terminal-eligibility">当前不能执行任务。最低 Celt 版本为 0.2.0。</p>':'';
+  return '<div class="terminal-list"><article class="terminal-card" data-terminal-id="101"><div class="terminal-title"><h3>前台电脑</h3><span class="pill">已激活</span></div><dl class="terminal-facts">'+facts.map(([label,value])=>'<div><dt>'+label+'</dt><dd>'+value+'</dd></div>').join('')+'</dl>'+warning+'</article></div>';
+}
+function render(){
+  const state=byId('state').value;
+  const views={
+    empty:'<div class="notice"><p>暂无终端。选择“添加终端”开始接入。</p></div>',
+    loading:'<div class="notice" role="status">正在读取终端…</div><div class="skeleton" aria-hidden="true"></div>',
+    error:'<div class="notice warning" role="alert"><p>暂时无法读取终端，请重试。</p></div>',
+    degraded:'<div class="notice warning" role="alert"><p>暂时无法刷新终端，以下显示上次读取的状态。</p></div>'+card('ready'),
+  };
+  byId('view').innerHTML=views[state]??card(state);
+  byId('refresh').disabled=state==='loading';
+}
+let expiry;
+function issue(){
+  clearTimeout(expiry);
+  byId('renew').hidden=true;
+  byId('activation').innerHTML='<output class="activation-code" aria-label="一次性激活码">DEMO-ONLY</output><p>过期时间 <time datetime="2026-11-05T08:10:00.000Z">2026年11月5日 16:10:00</time></p><p class="muted">请妥善保管。关闭此对话框后将清除这里显示的激活码。</p>';
+  expiry=setTimeout(()=>{byId('activation').innerHTML='<p role="alert">激活码已过期，请重新生成。</p>';byId('renew').hidden=false},15000);
+}
+byId('state').onchange=render;
+byId('add').onclick=()=>{byId('dialog').showModal();issue()};
+byId('dialog').onclose=()=>{clearTimeout(expiry);byId('activation').textContent=''};
+byId('close').onclick=()=>byId('dialog').close();
+byId('renew').onclick=issue;
+byId('refresh').onclick=()=>{byId('state').value='ready';render()};
+byId('workspace').onclick=()=>{location.href='personal-workspace.html'};
+byId('logout').onclick=()=>{location.href='personal-workspace.html#signed-out'};
+render();
+</script></body></html>

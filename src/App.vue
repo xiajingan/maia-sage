@@ -1,10 +1,20 @@
 <script setup lang="ts">
+import { ref, watch } from "vue";
 import type { createSessionController } from "./auth/session";
 import PersonalWorkspace from "./features/governance/PersonalWorkspace.vue";
-defineProps<{
+import TerminalWorkspace from "./features/terminals/TerminalWorkspace.vue";
+const props = defineProps<{
   controller?: ReturnType<typeof createSessionController>;
   bootError?: boolean;
 }>();
+const terminals = ref(false);
+watch(
+  () => props.controller?.state.session,
+  () => {
+    terminals.value = false;
+  },
+  { flush: "sync" },
+);
 </script>
 <template>
   <a
@@ -43,8 +53,32 @@ defineProps<{
       <p>运行配置缺失或无效，请联系管理员核对后重新打开。</p>
     </section>
     <template v-else-if="controller">
+      <nav
+        v-if="controller.state.session"
+        class="workspace-nav"
+        aria-label="工作空间"
+      >
+        <button
+          :aria-current="terminals ? undefined : 'page'"
+          @click="terminals = false"
+        >
+          个人工作空间
+        </button>
+        <button
+          :aria-current="terminals ? 'page' : undefined"
+          @click="terminals = true"
+        >
+          终端
+        </button>
+      </nav>
+      <TerminalWorkspace
+        v-if="terminals && controller.state.session"
+        :controller="controller"
+      />
       <PersonalWorkspace
-        v-if="controller.state.session || controller.state.phase === 'loading'"
+        v-else-if="
+          controller.state.session || controller.state.phase === 'loading'
+        "
         :state="controller.state"
         @reload="controller.load()"
       />

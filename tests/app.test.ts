@@ -1,6 +1,7 @@
 import { createSSRApp } from "vue";
 import { renderToString } from "vue/server-renderer";
 import { expect, test } from "vitest";
+import { createMudApi } from "../src/api/mud";
 import App from "../src/App.vue";
 import { ApiFailure, createSessionController } from "../src/auth/session";
 // TC-SAGE-001
@@ -16,6 +17,7 @@ test("已认证的读取错误页显示退出操作", async () => {
       clear: () => {},
     },
     api: {
+      ...createMudApi("https://localhost"),
       session: async () => {
         throw new ApiFailure(503);
       },
@@ -42,6 +44,7 @@ test("退出待响应页允许重新登录并使旧退出结果失效", async ()
       clear: () => {},
     },
     api: {
+      ...createMudApi("https://localhost"),
       session: async () => {
         throw new ApiFailure(503);
       },

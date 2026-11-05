@@ -1,13 +1,13 @@
 # 登录、会话与个人工作空间
 
-范围为 US-001 已批准的 Sage 切片。密码登录/注册与个人空间创建归 Mud；Sage 不创建根、成员或授权事实。空间名使用查询返回值，成员角色来自 owner 契约，不据页面角色放行请求。
+本文维护 Sage 的认证与个人空间。终端功能沿用同一会话，见[终端接入](terminals.md)。密码登录、注册与个人空间创建归 Mud。空间名使用查询返回值，成员角色来自 owner 契约。
 
 ## 结构与依赖
 
 - `src/auth/session.ts` 的公开接口 `createSessionController({oidc,api})` 提供 signIn/callback/load/logout/retryLogout/dispose。组件只提交意图、显示状态，不请求服务。
 - `src/auth/oidc.ts` 使用 oidc-client-ts 的无 UserStore `OidcClient` 完成授权码 + S256 PKCE。响应只返回 controller 的内存，不使用会保存令牌的 UserManager；API仅接受 access token。
-- `src/api/mud.ts` 消费 `maia-mud-client@0.1.1` 生成方法与 Schema。未知响应通过 TypeBox `Check` 校验，不运行 eval/Function，不手写后端 DTO。
-- 冻结制品 `vendor/maia-mud-client-0.1.1.tgz` 的 SHA256 为 `9741f1f191e6a8539c1444acc354ba9f9ba2edf3c868928458f2dda37d490e88`；`pnpm check:client` 核对制品、锁完整性及公开导出。该本地交付不是 registry 发布或生产签名证明。
+- `src/api/mud.ts` 消费 `maia-mud-client@0.2.0` 生成方法与 Schema。未知响应通过 TypeBox `Check` 校验，不运行 eval/Function，不手写后端 DTO。
+- 冻结制品 `vendor/maia-mud-client-0.2.0.tgz` 的 SHA256 为 `3de661e6b5097189c3fa15b85a045e05de23cc538a7f3a1c3f18c4baef2a8bc1`；`pnpm check:client` 核对制品、锁完整性及公开导出。该本地交付不是 registry 发布或生产签名证明。
 
 ## 协议及隔离
 
@@ -23,7 +23,7 @@ access/ID token仅在controller闭包内存。短期state/verifier/nonce只在�
 
 ## 视觉及可访问性
 
-没有既有设计系统，建立集中语义token：办公纸面白 `#ffffff`、蓝灰背景 `#edf2f7`、墨蓝文字 `#182f48`、工作动作蓝 `#164f8a`、辅助文字 `#52677d`、规则线 `#cedae6`。标题使用本机宋体，正文使用本机中文无衬线，不加载第三方字体。空间标题是主要识别点，左对齐标题与真实成员表；顶部只有品牌和退出，未交付模块没有入口。
+颜色由共享样式 token 定义。标题使用本机宋体，正文使用本机中文无衬线。空间标题是主要识别点，与成员表左对齐。顶部保留品牌和退出，登录后导航提供个人工作空间与终端入口。
 
 自检：初稿原本可用多张统计卡，但本片只有本人及成员事实，已改为单一标题区域和表格。层级用于解释空间与成员，不增加虚构统计。颜色、字级、间距、圆角、边框和焦点等集中于 `src/styles/tokens.css`。布局在40rem切换，小屏账号和长空间名换行。语义标题、table/th、状态区、跳转链接、可见焦点及原生按钮保持键盘路径；无自动动画。空列表说明暂未读取并提供核对操作，不把失败伪装为空。
 

@@ -25,6 +25,11 @@ const oidc = () => ({
   clear: vi.fn(),
 });
 const api = () => ({
+  listTerminals: async () => ({ items: [], nextCursor: null }),
+  issueTerminalActivation: async () => ({
+    code: "sample",
+    expiresAt: "2030-01-01T00:00:00.000Z",
+  }),
   session: vi.fn(async () => facts),
   members: vi.fn(async () => ({
     items: [{ userId: "2", loginName: "lili", role: "manager" as const }],

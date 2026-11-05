@@ -1,5 +1,10 @@
 import { shallowReactive } from "vue";
-import type { GetSessionResponse, ListMembersResponse } from "maia-mud-client";
+import type {
+  GetSessionResponse,
+  IssueTerminalActivationResponse,
+  ListMembersResponse,
+  ListTerminalsResponse,
+} from "maia-mud-client";
 export type Credentials = {
   accessToken: string;
   idToken: string;
@@ -14,6 +19,15 @@ export const LOGOUT_TIMEOUT_MS = 10_000;
 export interface Api {
   session(token: string): Promise<GetSessionResponse>;
   members(token: string, workspaceId: string): Promise<ListMembersResponse>;
+  issueTerminalActivation(
+    token: string,
+    signal: AbortSignal,
+  ): Promise<IssueTerminalActivationResponse>;
+  listTerminals(
+    token: string,
+    cursor: string | undefined,
+    signal: AbortSignal,
+  ): Promise<ListTerminalsResponse>;
   logout(
     input: {
       idTokenHint: string;
@@ -138,6 +152,36 @@ export function createSessionController({
     }
     state.requestId = requestId;
   }
+  async function withTerminalAccess<T>(
+    signal: AbortSignal,
+    request: (token: string) => Promise<T>,
+  ): Promise<T | undefined> {
+    const current = epoch;
+    const session = state.session;
+    const auth = credentials;
+    const isCurrent = () =>
+      !signal.aborted && current === epoch && state.session === session;
+    if (!auth || !session || !isCurrent()) return;
+    try {
+      const result = await request(auth.accessToken);
+      if (isCurrent()) return result;
+    } catch (error) {
+      if (!isCurrent()) return;
+      if (error instanceof ApiFailure && [401, 403].includes(error.status))
+        fail(error, false);
+      else throw error;
+    }
+  }
+  function issueTerminalActivation(signal: AbortSignal) {
+    return withTerminalAccess(signal, (token) =>
+      api.issueTerminalActivation(token, signal),
+    );
+  }
+  function listTerminals(cursor: string | undefined, signal: AbortSignal) {
+    return withTerminalAccess(signal, (token) =>
+      api.listTerminals(token, cursor, signal),
+    );
+  }
   let operation:
     | {
         input: { idTokenHint: string; logoutRequestId: string };
@@ -230,5 +274,15 @@ export function createSessionController({
     oidc.clear(true);
     reset("signed-out");
   }
-  return { state, signIn, callback, load, logout, retryLogout, dispose };
+  return {
+    state,
+    signIn,
+    callback,
+    load,
+    logout,
+    retryLogout,
+    dispose,
+    listTerminals,
+    issueTerminalActivation,
+  };
 }
