@@ -10,6 +10,7 @@ const {
   result,
   loading,
   listError,
+  pollingPaused,
   cursor,
   refresh,
   activation,
@@ -170,6 +171,13 @@ onBeforeUnmount(dispose);
     >
       <p>暂无终端。选择“添加终端”开始接入。</p>
     </div>
+    <p
+      v-if="pollingPaused && result && !listError"
+      class="notice muted"
+      role="status"
+    >
+      自动刷新已暂停，当前显示上次读取的状态。可手动刷新终端。
+    </p>
     <div class="notice terminal-actions">
       <button
         :disabled="loading"
@@ -192,6 +200,12 @@ onBeforeUnmount(dispose);
         下一页
       </button>
     </div>
+    <p
+      v-if="result?.nextCursor"
+      class="notice muted"
+    >
+      新接入的终端显示在列表末尾，可翻页查看。
+    </p>
   </section>
 
   <dialog

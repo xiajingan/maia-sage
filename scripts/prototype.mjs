@@ -19,7 +19,7 @@ ${css}</style></head><body>
 <main id="main" tabindex="-1">
 <nav class="workspace-nav" aria-label="工作空间"><button id="workspace">个人工作空间</button><button aria-current="page">终端</button></nav>
 <section class="intro"><h1>终端</h1><p>接入装有 Celt 的 Windows 电脑，查看连接、版本和本机能力。</p></section>
-<p class="footnote">原型仅展示示例数据。 <label>预览状态 <select id="state"><option value="ready">在线</option><option value="offline">离线</option><option value="low">低版本</option><option value="unknown">待确认</option><option value="empty">空</option><option value="loading">加载</option><option value="error">错误</option><option value="degraded">降级</option></select></label></p>
+<p class="footnote">原型仅展示示例数据。 <label>预览状态 <select id="state"><option value="ready">在线</option><option value="paused">自动刷新已暂停</option><option value="offline">离线</option><option value="low">低版本</option><option value="unknown">待确认</option><option value="empty">空</option><option value="loading">加载</option><option value="error">错误</option><option value="degraded">降级</option></select></label></p>
 <section class="panel" aria-labelledby="terminals-title">
 <div class="panel-heading terminal-heading"><h2 id="terminals-title">已接入终端</h2><button class="primary" id="add">添加终端</button></div>
 <div id="view"></div><div class="notice terminal-actions"><button id="refresh">刷新终端</button></div>
@@ -43,6 +43,7 @@ function render(){
     loading:'<div class="notice" role="status">正在读取终端…</div><div class="skeleton" aria-hidden="true"></div>',
     error:'<div class="notice warning" role="alert"><p>暂时无法读取终端，请重试。</p></div>',
     degraded:'<div class="notice warning" role="alert"><p>暂时无法刷新终端，以下显示上次读取的状态。</p></div>'+card('ready'),
+    paused:card('ready')+'<p class="notice muted" role="status">自动刷新已暂停，当前显示上次读取的状态。可手动刷新终端。</p>',
   };
   byId('view').innerHTML=views[state]??card(state);
   byId('refresh').disabled=state==='loading';
@@ -55,7 +56,7 @@ function issue(){
   expiry=setTimeout(()=>{byId('activation').innerHTML='<p role="alert">激活码已过期，请重新生成。</p>';byId('renew').hidden=false},15000);
 }
 byId('state').onchange=render;
-byId('add').onclick=()=>{byId('dialog').showModal();issue()};
+byId('add').onclick=()=>{byId('dialog').showModal();if(byId('state').value==='paused'){byId('state').value='ready';render()}issue()};
 byId('dialog').onclose=()=>{clearTimeout(expiry);byId('activation').textContent=''};
 byId('close').onclick=()=>byId('dialog').close();
 byId('renew').onclick=issue;

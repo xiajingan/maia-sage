@@ -7,6 +7,8 @@ import { ApiFailure, type createSessionController } from "../../auth/session";
 
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLLS = 60;
+const MAX_ACTIVATION_LIFETIME_MS = 600_000;
+const ACTIVATION_PROPAGATION_MS = 30_000;
 
 export function createTerminalPage(
   api: Pick<
@@ -19,12 +21,33 @@ export function createTerminalPage(
   const loading = ref(false);
   const listError = shallowRef<{ requestId?: string }>();
   const cursor = ref<string>();
+  const pollingPaused = ref(false);
   let poll: ReturnType<typeof setTimeout> | undefined;
   let remaining = MAX_POLLS;
+  let activationDeadline = 0;
+  let activationReads = 0;
+
+  function schedule() {
+    if (lifetime.signal.aborted) return;
+    const windowLeft = activationDeadline - Date.now();
+    if (windowLeft > 0 && activationReads > 0) {
+      activationReads--;
+      poll = setTimeout(
+        () => void read(),
+        Math.min(POLL_INTERVAL_MS, windowLeft),
+      );
+    } else if (remaining > 0) {
+      remaining--;
+      poll = setTimeout(() => void read(), POLL_INTERVAL_MS);
+    } else {
+      pollingPaused.value = true;
+    }
+  }
 
   async function read() {
     if (loading.value || lifetime.signal.aborted) return;
     loading.value = true;
+    pollingPaused.value = false;
     try {
       const page = await api.listTerminals(cursor.value, lifetime.signal);
       if (!page || lifetime.signal.aborted) return;
@@ -37,10 +60,7 @@ export function createTerminalPage(
       };
     } finally {
       loading.value = false;
-      if (!lifetime.signal.aborted && remaining > 0) {
-        remaining--;
-        poll = setTimeout(() => void read(), POLL_INTERVAL_MS);
-      }
+      schedule();
     }
   }
 
@@ -94,6 +114,16 @@ export function createTerminalPage(
         return;
       }
       activation.value = issued;
+      const duration =
+        Math.min(milliseconds, MAX_ACTIVATION_LIFETIME_MS) +
+        ACTIVATION_PROPAGATION_MS;
+      activationDeadline = Math.max(activationDeadline, Date.now() + duration);
+      activationReads = Math.ceil(
+        (activationDeadline - Date.now()) / POLL_INTERVAL_MS,
+      );
+      remaining = 0;
+      clearTimeout(poll);
+      void read();
       expiry = setTimeout(() => {
         clearActivation();
         activationExpired.value = true;
@@ -120,6 +150,7 @@ export function createTerminalPage(
     result,
     loading,
     listError,
+    pollingPaused,
     cursor,
     refresh,
     activation,

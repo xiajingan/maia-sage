@@ -73,6 +73,7 @@ try {
     eligible: true,
   };
   let list = [];
+  let listReads = 0;
   let failed = false;
   let holdList;
   const waitingForList = new Promise((resolve) => {
@@ -92,6 +93,7 @@ try {
     route.fulfill({ json: { items: [], nextCursor: null } }),
   );
   await page.route("**/api/mud/v1/terminals?*", async (route) => {
+    listReads++;
     await waitingForList;
     if (failed)
       return route.fulfill({
@@ -114,6 +116,7 @@ try {
     return route.fulfill({ status: 201, json: { code, expiresAt } });
   });
 
+  await page.clock.install();
   await page.goto(origin);
   await button("终端").click();
   await expect(
@@ -123,7 +126,13 @@ try {
   holdList();
   await expect(page.getByText("暂无终端。", { exact: false })).toBeVisible();
 
-  await page.clock.install();
+  for (let expected = 2; expected <= 61; expected++) {
+    await page.clock.fastForward(3000);
+    await expect.poll(() => listReads, { intervals: [10] }).toBe(expected);
+    await expect(button("刷新终端")).toBeEnabled();
+  }
+  const paused = page.getByText("自动刷新已暂停", { exact: false });
+  await expect(paused).toBeVisible();
   expiresAt = await page.evaluate(() =>
     new Date(Date.now() + 120000).toISOString(),
   );
@@ -143,6 +152,12 @@ try {
   await expect(dialog).toHaveCount(0);
   await expect(page.locator("output")).toHaveCount(0);
   await expect(add).toBeFocused();
+  await expect(paused).toHaveCount(0);
+  await expect(button("刷新终端")).toBeEnabled();
+  list = [sample];
+  await page.clock.fastForward(3000);
+  await expect(page.locator('[data-terminal-id="101"]')).toBeVisible();
+  list = [];
 
   await add.click();
   await expect(activation).toHaveText(code);

@@ -99,6 +99,44 @@ test("轮询达到上限后停止，页面离开时丢弃旧列表", async () =>
 });
 
 // TC-SAGE-002
+test("签发重启已暂停的查询，直到码到期后仍可看到刚接入的终端", async () => {
+  vi.useFakeTimers();
+  const terminal = {
+    terminalId: "101",
+    hostname: "前台电脑",
+    connection: "online" as const,
+    lastSeenAt: "2026-11-05T08:00:00.000Z",
+    celtVersion: "0.2.0",
+    windowsVersion: "Windows 11",
+    capabilities: ["wecom.send_message"],
+    minimumCeltVersion: "0.2.0",
+    eligible: true,
+  };
+  let items: (typeof terminal)[] = [];
+  const list = vi.fn(async () => ({ items, nextCursor: null }));
+  const page = createTerminalPage({
+    listTerminals: list,
+    issueTerminalActivation: async () => ({
+      code: "sample",
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    }),
+  });
+  await page.refresh("existing-page");
+  await vi.runAllTimersAsync();
+  expect(list).toHaveBeenCalledTimes(61);
+  await page.issue();
+  page.closeActivation();
+  await vi.advanceTimersByTimeAsync(605_000);
+  items = [terminal];
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(page.result.value?.items).toEqual([terminal]);
+  expect(page.cursor.value).toBe("existing-page");
+  await vi.runAllTimersAsync();
+  expect(page.pollingPaused.value).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+// TC-SAGE-002
 test("旧会话终端请求的拒绝不会撤销新会话", async () => {
   let reject!: (error: unknown) => void;
   const api = createMudApi("https://localhost");
