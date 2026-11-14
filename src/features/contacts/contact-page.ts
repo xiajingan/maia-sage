@@ -29,12 +29,17 @@ export function createContactPage({
   }>({ loading: false, syncing: false, forbidden: false, unknownSync: false });
   let abort = new AbortController();
   let disposed = false;
-  let pending: RequestContactSyncData["body"] | undefined;
+  // A recheck confirms its original request, not a replacement page summary.
+  let pending:
+    | { input: RequestContactSyncData["body"]; factsGeneration: number }
+    | undefined;
   let readGeneration = 0;
+  let acceptedFactsGeneration = 0;
   function clear() {
     abort.abort();
     abort = new AbortController();
     readGeneration++;
+    acceptedFactsGeneration++;
     state.page = undefined;
     state.sync = undefined;
     state.loading = false;
@@ -95,6 +100,7 @@ export function createContactPage({
     if (!allowed() || state.loading) return;
     const signal = abort.signal;
     const generation = ++readGeneration;
+    const factsGeneration = acceptedFactsGeneration;
     const id = state.instanceId!;
     state.loading = true;
     state.message = undefined;
@@ -109,14 +115,21 @@ export function createContactPage({
         !result ||
         signal.aborted ||
         !allowed() ||
-        generation !== readGeneration
+        generation !== readGeneration ||
+        factsGeneration !== acceptedFactsGeneration
       )
         return;
+      acceptedFactsGeneration++;
       state.page =
         result.accessState === "active" ? result : { ...result, items: [] };
       state.sync = result.sync ?? undefined;
     } catch (error) {
-      if (!signal.aborted && allowed() && generation === readGeneration)
+      if (
+        !signal.aborted &&
+        allowed() &&
+        generation === readGeneration &&
+        factsGeneration === acceptedFactsGeneration
+      )
         fail(error);
     } finally {
       if (!signal.aborted && generation === readGeneration)
@@ -124,7 +137,10 @@ export function createContactPage({
     }
   }
   function acceptSync(result: GetContactSyncResponse) {
+    // Only an answer based on the still-current facts reaches this boundary.
+    acceptedFactsGeneration++;
     state.sync = result;
+    // A different scope makes these rows incompatible; it does not imply ordering.
     if (result.scopeVersion !== state.page?.scopeVersion) {
       state.page = undefined;
       state.cursor = undefined;
@@ -140,7 +156,11 @@ export function createContactPage({
       state.page?.accessState !== "active"
     )
       return;
-    if (!pending) pending = { clientRequestId: crypto.randomUUID() };
+    if (!pending)
+      pending = {
+        input: { clientRequestId: crypto.randomUUID() },
+        factsGeneration: acceptedFactsGeneration,
+      };
     await retrySync();
   }
   async function retrySync() {
@@ -151,7 +171,8 @@ export function createContactPage({
       session.state.session?.membership.role !== "manager"
     )
       return;
-    const input = pending;
+    const { input, factsGeneration } = pending;
+    const requestFactsGeneration = acceptedFactsGeneration;
     const id = state.instanceId!;
     const signal = abort.signal;
     state.syncing = true;
@@ -161,14 +182,15 @@ export function createContactPage({
         api.requestContactSync(token, id, input, signal),
       );
       if (result && !signal.aborted && allowed()) {
-        acceptSync(result);
+        if (factsGeneration === acceptedFactsGeneration) acceptSync(result);
         pending = undefined;
         state.unknownSync = false;
       }
     } catch (error) {
       if (!signal.aborted && allowed()) {
         state.unknownSync = true;
-        fail(error, true);
+        if (requestFactsGeneration === acceptedFactsGeneration)
+          fail(error, true);
       }
     } finally {
       if (!signal.aborted) state.syncing = false;
@@ -178,17 +200,28 @@ export function createContactPage({
     const sync = state.sync;
     if (!sync || !allowed() || state.syncing) return;
     const signal = abort.signal;
+    const factsGeneration = acceptedFactsGeneration;
     state.syncing = true;
     try {
       const result = await session.withAccess(signal, (token) =>
         api.getContactSync(token, state.instanceId!, sync.syncId, signal),
       );
-      if (result && !signal.aborted && allowed()) {
+      if (
+        result &&
+        !signal.aborted &&
+        allowed() &&
+        factsGeneration === acceptedFactsGeneration
+      ) {
         acceptSync(result);
         state.syncMessage = undefined;
       }
     } catch (error) {
-      if (!signal.aborted && allowed()) fail(error, true);
+      if (
+        !signal.aborted &&
+        allowed() &&
+        factsGeneration === acceptedFactsGeneration
+      )
+        fail(error, true);
     } finally {
       if (!signal.aborted) state.syncing = false;
     }

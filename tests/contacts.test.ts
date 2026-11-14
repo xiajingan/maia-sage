@@ -184,3 +184,225 @@ test("generated contract rejects a contact carrying an extracted name", async ()
   expect(page.state.message).toContain("停止显示旧资料");
   page.dispose();
 });
+
+// TC-SAGE-003
+test.each([
+  {
+    title: "different scope and sync",
+    scopeVersion: "2",
+    syncId: "41",
+    rowVersion: "1",
+  },
+  {
+    title: "same scope, replaced sync",
+    scopeVersion: "1",
+    syncId: "41",
+    rowVersion: "1",
+  },
+  {
+    title: "same scope and sync, replaced rowVersion",
+    scopeVersion: "1",
+    syncId: "40",
+    rowVersion: "2",
+  },
+])(
+  "older sync query cannot replace accepted page facts: $title",
+  async ({ scopeVersion, syncId, rowVersion }) => {
+    let latest = false;
+    let finish!: (response: Response) => void;
+    const latestSync = {
+      ...contacts.sync!,
+      scopeVersion,
+      syncId,
+      rowVersion,
+      phase: "running" as const,
+    };
+    const latestPage = { ...contacts, scopeVersion, sync: latestSync };
+    const { api, session } = await harness((request) =>
+      new URL(request.url).pathname.includes("contact-syncs")
+        ? new Promise<Response>((resolve) => {
+            finish = resolve;
+          })
+        : Response.json(latest ? latestPage : contacts),
+    );
+    const page = createContactPage({ api, session });
+    await page.select("1", "20");
+    const old = page.querySync();
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    latest = true;
+    await page.refresh();
+    expect(page.state.sync).toEqual(latestSync);
+    finish(
+      Response.json({
+        ...contacts.sync,
+        phase: "completed",
+        coverage: "complete",
+      }),
+    );
+    await old;
+    expect(page.state.page).toEqual(latestPage);
+    expect(page.state.sync).toEqual(latestSync);
+    expect(page.state.syncing).toBe(false);
+    expect(page.state.loading).toBe(false);
+    page.dispose();
+  },
+);
+// TC-SAGE-003
+test("older sync query failure cannot annotate a replacement page", async () => {
+  let latest = false;
+  let finish!: (response: Response) => void;
+  const restrictedPage = {
+    ...contacts,
+    scopeVersion: "2",
+    accessState: "pending_verification" as const,
+    safeReason: "scope_reverification_required",
+    sync: null,
+    items: [],
+  };
+  const { api, session } = await harness((request) =>
+    new URL(request.url).pathname.includes("contact-syncs")
+      ? new Promise<Response>((resolve) => {
+          finish = resolve;
+        })
+      : Response.json(latest ? restrictedPage : contacts),
+  );
+  const page = createContactPage({ api, session });
+  await page.select("1", "20");
+  const old = page.querySync();
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  latest = true;
+  await page.refresh();
+  finish(
+    Response.json(
+      {
+        code: "UNAVAILABLE",
+        message: "safe",
+        requestId: "old-query",
+        recovery: "query_original",
+      },
+      { status: 503 },
+    ),
+  );
+  await old;
+  expect(page.state.page).toEqual(restrictedPage);
+  expect(page.state.sync).toBeUndefined();
+  expect(page.state.syncMessage).toBeUndefined();
+  expect(page.state.requestId).toBeUndefined();
+  expect(page.state.syncing).toBe(false);
+  expect(page.state.loading).toBe(false);
+  page.dispose();
+});
+
+// TC-SAGE-003
+test("rechecking an unknown original sync confirms its key without replacing later page facts", async () => {
+  let latest = false;
+  let unknown = true;
+  const latestSync = {
+    ...contacts.sync!,
+    syncId: "41",
+    scopeVersion: "2",
+    phase: "running" as const,
+  };
+  const latestPage = { ...contacts, scopeVersion: "2", sync: latestSync };
+  const { api, session, requests } = await harness((request) =>
+    request.method === "POST"
+      ? unknown
+        ? Response.json(
+            {
+              code: "RESULT_UNKNOWN",
+              message: "safe",
+              requestId: "original-sync",
+              recovery: "query_original",
+            },
+            { status: 503 },
+          )
+        : Response.json({
+            ...contacts.sync,
+            phase: "completed",
+            coverage: "complete",
+          })
+      : Response.json(latest ? latestPage : contacts),
+  );
+  const page = createContactPage({ api, session });
+  await page.select("1", "20");
+  await page.requestSync();
+  expect(page.state.unknownSync).toBe(true);
+  const original = requests.at(-1)!;
+  latest = true;
+  await page.refresh();
+  unknown = false;
+  await page.retrySync();
+  expect(await requests.at(-1)!.json()).toEqual(await original.json());
+  expect(page.state.unknownSync).toBe(false);
+  expect(page.state.page).toEqual(latestPage);
+  expect(page.state.sync).toEqual(latestSync);
+  expect(page.state.syncing).toBe(false);
+  page.dispose();
+});
+// TC-SAGE-003
+test.each([401, 403])(
+  "current sync query %s retains the existing permission cleanup",
+  async (status) => {
+    const { api, session } = await harness((request) =>
+      new URL(request.url).pathname.includes("contact-syncs")
+        ? Response.json(
+            {
+              code: status === 401 ? "UNAUTHENTICATED" : "FORBIDDEN",
+              message: "safe",
+              requestId: "current-sync",
+              recovery: "check",
+            },
+            { status },
+          )
+        : Response.json(contacts),
+    );
+    const page = createContactPage({ api, session });
+    await page.select("1", "20");
+    await page.querySync();
+    expect(page.state.page).toBeUndefined();
+    expect(page.state.sync).toBeUndefined();
+    expect(page.state.forbidden).toBe(status === 403);
+    expect(session.state.phase).toBe(status === 401 ? "signed-out" : "ready");
+    expect(page.state.syncing).toBe(false);
+    page.dispose();
+  },
+);
+
+// TC-SAGE-003
+test("a current denial while rechecking an old sync still clears replacement page data", async () => {
+  let latest = false;
+  const { api, session } = await harness((request) =>
+    request.method === "POST"
+      ? Response.json(
+          {
+            code: latest ? "FORBIDDEN" : "RESULT_UNKNOWN",
+            message: "safe",
+            requestId: "sync-recheck",
+            recovery: "check",
+          },
+          { status: latest ? 403 : 503 },
+        )
+      : Response.json(
+          latest
+            ? {
+                ...contacts,
+                scopeVersion: "2",
+                sync: { ...contacts.sync!, syncId: "41", scopeVersion: "2" },
+              }
+            : contacts,
+        ),
+  );
+  const page = createContactPage({ api, session });
+  await page.select("1", "20");
+  await page.requestSync();
+  expect(page.state.unknownSync).toBe(true);
+  latest = true;
+  await page.refresh();
+  await page.retrySync();
+  expect(page.state.forbidden).toBe(true);
+  expect(page.state.page).toBeUndefined();
+  expect(page.state.sync).toBeUndefined();
+  expect(session.state.phase).toBe("ready");
+  expect(page.state.syncing).toBe(false);
+  page.dispose();
+});
