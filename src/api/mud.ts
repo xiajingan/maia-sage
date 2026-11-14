@@ -1,5 +1,17 @@
 import {
   createClient,
+  createNameContext,
+  getNameContext,
+  completeNameContext,
+  getNameComponentConfig,
+  type CreateNameContextData,
+  type CreateNameContextResponse,
+  type GetNameContextData,
+  type GetNameContextResponse,
+  type CompleteNameContextData,
+  type CompleteNameContextResponse,
+  type GetNameComponentConfigData,
+  type GetNameComponentConfigResponse,
   createWecomInstallOperation,
   getWecomInstallOperation,
   completeWecomInstallOperation,
@@ -28,6 +40,8 @@ import {
   type ListMembersResponse,
 } from "maia-mud-client";
 import {
+  NameContextViewSchema,
+  NameComponentConfigSchema,
   InstallViewSchema,
   ChannelInstancesViewSchema,
   ContactPageSchema,
@@ -92,7 +106,29 @@ export interface WecomApi {
     signal: AbortSignal,
   ): Promise<GetContactSyncResponse>;
 }
-export function createMudApi(baseUrl: string): Api & WecomApi {
+export interface NameApi {
+  createNameContext(
+    token: string,
+    input: Pick<CreateNameContextData, "path" | "body">,
+    signal: AbortSignal,
+  ): Promise<CreateNameContextResponse>;
+  getNameContext(
+    token: string,
+    input: Pick<GetNameContextData, "path">,
+    signal: AbortSignal,
+  ): Promise<GetNameContextResponse>;
+  completeNameContext(
+    token: string,
+    input: Pick<CompleteNameContextData, "path" | "body">,
+    signal: AbortSignal,
+  ): Promise<CompleteNameContextResponse>;
+  getNameComponentConfig(
+    token: string,
+    input: Pick<GetNameComponentConfigData, "path" | "body">,
+    signal: AbortSignal,
+  ): Promise<GetNameComponentConfigResponse>;
+}
+export function createMudApi(baseUrl: string): Api & WecomApi & NameApi {
   const client = createClient({ baseUrl });
   function read<T>(
     result: { data?: unknown; error?: unknown; response?: Response },
@@ -105,12 +141,65 @@ export function createMudApi(baseUrl: string): Api & WecomApi {
       throw new ApiFailure(
         result.response?.status ?? 0,
         Check(errorSchema, error) ? error.requestId : undefined,
+        Check(ErrorViewSchema, error) ? error.recovery : undefined,
       );
     }
     if (!Check(schema, result.data)) throw new ApiFailure(0);
     return result.data as T;
   }
   return {
+    async createNameContext(token, input, signal) {
+      return read<CreateNameContextResponse>(
+        await createNameContext({
+          client,
+          auth: token,
+          ...input,
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: requestSignal(signal),
+        }),
+        NameContextViewSchema,
+      );
+    },
+    async getNameContext(token, input, signal) {
+      return read<GetNameContextResponse>(
+        await getNameContext({
+          client,
+          auth: token,
+          ...input,
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: requestSignal(signal),
+        }),
+        NameContextViewSchema,
+      );
+    },
+    async completeNameContext(token, input, signal) {
+      return read<CompleteNameContextResponse>(
+        await completeNameContext({
+          client,
+          auth: token,
+          ...input,
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: requestSignal(signal),
+        }),
+        NameContextViewSchema,
+      );
+    },
+    async getNameComponentConfig(token, input, signal) {
+      return read<GetNameComponentConfigResponse>(
+        await getNameComponentConfig({
+          client,
+          auth: token,
+          ...input,
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: requestSignal(signal),
+        }),
+        NameComponentConfigSchema,
+      );
+    },
     async createWecomInstallOperation(token, workspaceId, body, signal) {
       return read<CreateWecomInstallOperationResponse>(
         await createWecomInstallOperation({

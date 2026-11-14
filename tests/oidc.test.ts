@@ -192,3 +192,45 @@ test("真实oidc-client-ts验证state/nonce，离页保留PKCE，回调清理且
     vi.unstubAllGlobals();
   }
 });
+
+// TC-SAGE-004
+test("same_window_prompt_none 使用显式无交互PKCE恢复，不持久Bearer", async () => {
+  vi.stubGlobal("sessionStorage", storage());
+  let authorization = "";
+  vi.stubGlobal("window", {
+    location: {
+      href:
+        config.apiBaseUrl + "/workspaces/1/channel-app-instances/20/contacts",
+      assign: (url: string) => {
+        authorization = url;
+      },
+    },
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json({
+        issuer,
+        authorization_endpoint: issuer + "/auth",
+        token_endpoint: issuer + "/token",
+      }),
+    ),
+  );
+  try {
+    const oidc = createOidc(config);
+    await oidc.signIn(true, { sameSessionOnly: true });
+    const url = new URL(authorization);
+    expect(url.searchParams.get("prompt")).toBe("none");
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(url.searchParams.get("response_type")).toBe("code");
+    const state = url.searchParams.get("state");
+    await expect(
+      oidc.callback(
+        config.redirectUri + "?error=login_required&state=" + state,
+      ),
+    ).rejects.toThrow();
+    expect(sessionStorage.getItem("sage.oidc." + state)).toBeNull();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

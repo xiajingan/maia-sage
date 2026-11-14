@@ -76,7 +76,7 @@ export function createOidc(config: RuntimeConfig): Oidc {
   }
   return {
     clear,
-    async signIn(restore = false) {
+    async signIn(restore = false, options) {
       const current = generation;
       await client.clearStaleState();
       const request = await client.createSigninRequest({
@@ -87,7 +87,11 @@ export function createOidc(config: RuntimeConfig): Oidc {
             config.apiBaseUrl,
           ),
         },
-        ...(restore ? {} : { prompt: "login" }),
+        ...(options?.sameSessionOnly
+          ? { prompt: "none" }
+          : restore
+            ? {}
+            : { prompt: "login" }),
       });
       if (current !== generation) {
         await store.remove(request.state.id);

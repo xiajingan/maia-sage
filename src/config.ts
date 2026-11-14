@@ -2,6 +2,7 @@ import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 const RuntimeSchema = Type.Object(
   {
+    wecomNamesEnabled: Type.Optional(Type.Boolean()),
     issuer: Type.String(),
     clientId: Type.Literal("sage"),
     redirectUri: Type.String(),

@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import { clearNameReturn } from "./features/contacts/name-context";
 import { ref, watch, onBeforeUnmount, computed } from "vue";
 import type { createSessionController } from "./auth/session";
-import type { WecomApi } from "./api/mud";
+import type { WecomApi, NameApi } from "./api/mud";
 import WecomWorkspace from "./features/wecom/WecomWorkspace.vue";
 import ContactWorkspace from "./features/contacts/ContactWorkspace.vue";
 import PersonalWorkspace from "./features/governance/PersonalWorkspace.vue";
@@ -9,7 +10,8 @@ import TerminalWorkspace from "./features/terminals/TerminalWorkspace.vue";
 const props = defineProps<{
   controller?: ReturnType<typeof createSessionController>;
   bootError?: boolean;
-  api?: WecomApi;
+  api?: WecomApi & Partial<NameApi>;
+  wecomNamesEnabled?: boolean;
 }>();
 const path = ref(
   typeof globalThis.location === "undefined"
@@ -94,7 +96,10 @@ watch(
       </div>
       <button
         v-if="controller?.state.canLogout"
-        @click="controller.logout()"
+        @click="
+          clearNameReturn();
+          controller.logout();
+        "
       >
         退出登录
       </button><span
@@ -144,6 +149,7 @@ watch(
       <ContactWorkspace
         v-if="contactsRoute && api && controller.state.session"
         :key="path"
+        :wecom-names-enabled="wecomNamesEnabled"
         :api="api"
         :session="controller"
         :workspace-id="contactsRoute[1]!"

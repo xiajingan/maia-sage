@@ -34,6 +34,10 @@ for (const key of [
   "listContacts",
   "requestContactSync",
   "getContactSync",
+  "createNameContext",
+  "getNameContext",
+  "completeNameContext",
+  "getNameComponentConfig",
 ])
   if (typeof client[key] !== "function") throw new Error("client导出缺失");
 console.log("maia-mud-client@0.5.0 SHA256、锁完整性与公开导出通过");

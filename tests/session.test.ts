@@ -266,3 +266,15 @@ test("business return path is released only by the current successful callback",
   expect(await old).toBeUndefined();
   expect(controller.state.phase).toBe("ready");
 });
+
+// TC-SAGE-004
+test("同窗口恢复选项传递给既有OIDC，失败不会留下可用会话", async () => {
+  const o = oidc();
+  const c = createSessionController({ oidc: o, api: api() });
+  await c.callback("synthetic");
+  o.signIn.mockRejectedValueOnce(new Error("login_required"));
+  await c.signIn(true, { sameSessionOnly: true });
+  expect(o.signIn).toHaveBeenCalledWith(true, { sameSessionOnly: true });
+  expect(c.state.session).toBeUndefined();
+  expect(c.state.phase).toBe("error");
+});

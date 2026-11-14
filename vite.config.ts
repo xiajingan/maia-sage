@@ -48,12 +48,19 @@ const proxy: Record<string, ProxyOptions> = {
 const headers = {
   "Cache-Control": "no-store",
   "Content-Security-Policy":
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+    "default-src 'self'; script-src 'self' https://res.wx.qq.com/open/js/jweixin-1.2.0.js https://open.work.weixin.qq.com/wwopen/js/jwxwork-1.0.0.js; style-src 'self' 'unsafe-inline'; connect-src 'self' https://open.work.weixin.qq.com/wwopen/openData/getOpenData; frame-src https://open.work.weixin.qq.com/wwopen/openData/frame/index; img-src 'self' data: https://wwcdn.weixin.qq.com/node/wework/images/1x1-00000000.91e42db1c6.png; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "X-Content-Type-Options": "nosniff",
 };
 export default defineConfig({
-  plugins: [vue(), middleware],
+  plugins: [
+    vue({
+      template: {
+        compilerOptions: { isCustomElement: (tag) => tag === "ww-open-data" },
+      },
+    }),
+    middleware,
+  ],
   server: {
     port,
     strictPort: true,

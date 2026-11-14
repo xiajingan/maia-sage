@@ -1,0 +1,41 @@
+---
+id: TC-SAGE-004
+title: 官方姓名组件、页面授权与原 Maia 会话恢复
+priority: P1
+story: US-006
+---
+
+# TC-SAGE-004 官方姓名组件、页面授权与原 Maia 会话恢复
+
+## 来源
+
+[US-006](../../../docs/product/stories/US-006-从企业微信同步内部联系人.md) AC-14～17：官方组件展示、组件失败独立于同步、普通浏览器页面授权保留 Maia 身份/权限、错误企业不改实例归属。AC-14/16 的真人姓名正确性需真实参与者确认，本用例合成验证不代替该验收。
+
+## 前置条件
+
+- 已有 Maia 个人空间及当前实例访问权限，联系人列表有可信同步记录。
+- 公开姓名开关开启；测试夹具所有企业/成员/授权响应均为合成数据。
+- 验证同窗口恢复时保留非秘密原操作关联，实际issuer和sid核对分别由OIDC/Mud负责。
+
+## 步骤与预期结果
+
+1. 普通浏览器点击姓名授权，完成合成窗口返回：原窗口保留自己的会话，仅正确来源/同源/原操作通知可触发查询与完成。结果页清除query/hash，消息只有operationId。HTTPS合成create响应设置HttpOnly/Secure/Lax的__Host Cookie，后续query/complete/config由浏览器自动携带，测试不从JS读取其值。
+2. 阻止弹窗、返回错误企业或缺登录授权配置：分别显示显式打开入口、核对企业/新上下文入口或配置提示；不循环授权、不切换实例、不改变同步成功。
+3. 企微整页返回：仅受控联系人路径和原操作可恢复，OIDC显式prompt=none和S256 PKCE。无原issuer会话或原操作被sid/权限拒绝时，要求先Maia登录再新建上下文，不能用企微code登录Maia。
+4. 加载官方组件：企微先config再agentConfig；Web跳过config。checkSession成功后才创建官方元素，并在挂载后bind。ready/update/bound只表示阶段，不能宣称真人显示成功。
+5. 超时、错误、过期、URL或范围变化、退出/切实例：组件卸载，监听与旧请求隔离；晚ready/error/update不能复活旧元素。全局初始化中断后必须刷新再核对，不继续初始化新范围。
+6. 重试原姓名授权：先重查当前上下文/范围再取同页20条配置，Vue元素可重新挂载；容量受限显示安全恢复指导，原Maia会话与联系人同步摘要保留。
+7. 在桌面/移动布局以及独立浏览器中查看：无整页横向溢出、未知/空/受限有下一步；第二浏览器不能凭operationId取得原Bearer或原窗口source。
+
+## 测试代码
+
+- `tests/name-context.test.ts`：popup_source_and_origin、原关联、失权/迟到响应、分页/预算与同窗口恢复拒绝。
+- `tests/wecom-name.test.ts`：sdk_ready_is_not_real_name、component_expired_or_wrong_corp、Web/企微时序与卸载/超时/事件隔离。
+- `tests/oidc.test.ts`：same_window_prompt_none 及原state、nonce、returnPath、晚回调隔离。
+- `tests/session.test.ts`：显式恢复选项传递与失败后无可用会话。
+- `scripts/check-name-recovery-browser.mjs`：实际main入口、OIDC库/PKCE/JWS、同窗口返回与reload、合成Mud的sid拒绝及issuer login_required；只查原操作且不持久Bearer。
+- `scripts/check-name-browser.mjs`、`tests/fixtures/name-browser.ts`：真实Chrome/实际Vue与生成客户端，合成API/SDK、CSP、主路径与上述交互状态；截图仅合成数据。
+
+## 执行
+
+`pnpm exec vitest run tests/name-context.test.ts tests/wecom-name.test.ts tests/oidc.test.ts tests/session.test.ts`，`pnpm check:name-browser`、`pnpm check:name-recovery-browser`。前置静态/类型/生成客户端/构建/原型检查沿本工程package.json。

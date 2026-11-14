@@ -20,7 +20,9 @@
     "check:terminal-browser": "node scripts/check-terminal-browser.mjs",
     "prototype": "node scripts/prototype.mjs",
     "check:prototype": "node scripts/prototype.mjs --check",
-    "check:wecom-browser": "node scripts/check-wecom-browser.mjs"
+    "check:wecom-browser": "node scripts/check-wecom-browser.mjs",
+    "check:name-browser": "node scripts/check-name-browser.mjs",
+    "check:name-recovery-browser": "node scripts/check-name-recovery-browser.mjs"
   },
   "dependencies": {
     "jose": "6.2.13",

@@ -1,16 +1,136 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from "vue";
-import type { WecomApi } from "../../api/mud";
+import { onBeforeUnmount, onMounted, watch, ref, nextTick } from "vue";
+import type { WecomApi, NameApi } from "../../api/mud";
 import type { createSessionController } from "../../auth/session";
 import { createContactPage } from "./contact-page";
+import WecomName from "./WecomName.vue";
+import {
+  createNameContextController,
+  readNameReturn,
+  clearNameReturn,
+} from "./name-context";
+import { bindNames, type NameRenderStatus } from "./wecom-sdk";
 const props = defineProps<{
-  api: WecomApi;
+  api: WecomApi & Partial<NameApi>;
+  wecomNamesEnabled?: boolean;
   session: ReturnType<typeof createSessionController>;
   workspaceId: string;
   instanceId: string;
 }>();
 const { state, select, refresh, requestSync, retrySync, querySync, dispose } =
   createContactPage({ api: props.api, session: props.session });
+const names =
+  props.wecomNamesEnabled &&
+  props.api.createNameContext &&
+  props.api.getNameContext &&
+  props.api.completeNameContext &&
+  props.api.getNameComponentConfig
+    ? createNameContextController({
+        api: props.api as WecomApi & NameApi,
+        session: props.session,
+      })
+    : undefined;
+const namesMounted = ref(false),
+  nameStage = ref<NameRenderStatus["stage"]>();
+const contactTable = ref<globalThis.HTMLElement>();
+let binding: globalThis.AbortController | undefined;
+function stopNames() {
+  binding?.abort();
+  binding = undefined;
+  namesMounted.value = false;
+}
+watch(
+  () => [state.page, state.cursor, state.loading] as const,
+  async ([page, cursor, loading]) => {
+    stopNames();
+    if (!names) return;
+    if (loading) {
+      names.suspend();
+      return;
+    }
+    if (!page || page.accessState !== "active") {
+      names.select();
+      return;
+    }
+    names.select({
+      workspaceId: props.workspaceId,
+      instanceId: props.instanceId,
+      scopeVersion: page.scopeVersion,
+      cursor,
+    });
+    const saved = readNameReturn();
+    if (saved) await names.resume(saved);
+    else if (names.state.operation) await names.query();
+  },
+  { flush: "sync" },
+);
+watch(
+  () => names?.state.config,
+  async (config) => {
+    stopNames();
+    nameStage.value = undefined;
+    if (!config) return;
+    const current = new globalThis.AbortController();
+    binding = current;
+    await nextTick();
+    if (current.signal.aborted) return;
+    await bindNames(config, {
+      signal: current.signal,
+      unmount: () => {
+        if (binding === current) namesMounted.value = false;
+      },
+      mount: async () => {
+        if (current.signal.aborted) return [];
+        namesMounted.value = true;
+        await nextTick();
+        if (current.signal.aborted) return [];
+        return Array.from(
+          contactTable.value?.querySelectorAll("ww-open-data") ?? [],
+        );
+      },
+      onStatus: (status) => {
+        if (current.signal.aborted) return;
+        nameStage.value = status.stage;
+        if (
+          [
+            "error",
+            "expired",
+            "invalid",
+            "timeout",
+            "reload_required",
+          ].includes(status.stage)
+        )
+          namesMounted.value = false;
+      },
+    });
+  },
+  { flush: "sync" },
+);
+function authorizeNames() {
+  void names?.start(
+    /MicroMessenger/i.test(globalThis.navigator.userAgent) ? "member" : "web",
+  );
+}
+function receiveNameResult(event: globalThis.MessageEvent) {
+  void names?.receive(event);
+}
+function loginForNames() {
+  clearNameReturn();
+  names?.recreate();
+  void props.session.signIn();
+}
+function reloadNames() {
+  names?.saveReturn();
+  globalThis.window.location.reload();
+}
+onMounted(() =>
+  globalThis.window.addEventListener("message", receiveNameResult),
+);
+onBeforeUnmount(() => {
+  stopNames();
+  names?.dispose();
+  globalThis.window.removeEventListener("message", receiveNameResult);
+});
 const availability = {
   available: "可获取",
   not_authorized: "未获准",
@@ -129,7 +249,94 @@ onBeforeUnmount(dispose);
       </p>
     </div>
     <div
+      v-if="names && state.page?.accessState === 'active'"
+      class="notice"
+    >
+      <p role="status">
+        {{
+          names.state.message ??
+            (names.state.busy
+              ? "正在核对姓名展示资格…"
+              : namesMounted
+                ? "官方组件已绑定，实际姓名请本人核对；成员标识不能代表姓名。"
+                : "姓名暂不可展示，可授权当前企业的姓名展示。")
+        }}
+      </p>
+      <p
+        v-if="nameStage && !['bound', 'update'].includes(nameStage)"
+        class="muted"
+      >
+        {{
+          ["reload_required", "timeout"].includes(nameStage)
+            ? "请刷新页面后重新核对姓名展示。"
+            : ["error", "invalid", "expired"].includes(nameStage)
+              ? "姓名展示未完成，请重新核对当前上下文与授权范围。"
+              : "正在准备官方姓名组件…"
+        }}
+      </p>
+      <div class="terminal-actions">
+        <button
+          v-if="!names.state.operation"
+          :disabled="names.state.busy"
+          @click="authorizeNames"
+        >
+          授权姓名展示
+        </button>
+        <button
+          v-if="names.state.operation?.nextAction === 'authorize'"
+          :disabled="names.state.busy"
+          @click="names.openAuthorization()"
+        >
+          打开姓名授权
+        </button>
+        <button
+          v-if="
+            names.state.operation &&
+              !names.state.blocked &&
+              names.state.operation.nextAction !== 'check_configuration'
+          "
+          :disabled="names.state.busy"
+          @click="
+            stopNames();
+            names.query();
+          "
+        >
+          核对原姓名授权
+        </button>
+        <button
+          v-if="names.state.requiresLogin"
+          @click="loginForNames"
+        >
+          先登录 Maia
+        </button>
+        <button
+          v-if="
+            !names.state.requiresLogin &&
+              (names.state.blocked ||
+                names.state.operation?.nextAction === 'recreate')
+          "
+          :disabled="names.state.busy"
+          @click="
+            stopNames();
+            names.recreate();
+          "
+        >
+          重新建立姓名上下文
+        </button>
+        <button
+          v-if="nameStage && ['reload_required', 'timeout'].includes(nameStage)"
+          @click="reloadNames"
+        >
+          刷新页面恢复姓名展示
+        </button>
+      </div>
+      <p class="muted">
+        姓名展示受限不改变联系人同步结果或实例归属。
+      </p>
+    </div>
+    <div
       v-if="state.page?.items.length"
+      ref="contactTable"
       class="table-scroll"
       tabindex="0"
       role="region"
@@ -169,7 +376,15 @@ onBeforeUnmount(dispose);
                 :scope-version="state.page.scopeVersion"
                 :cursor="state.cursor"
               >
-                <span class="muted">姓名暂不可展示</span>
+                <WecomName
+                  :active="namesMounted"
+                  :reference="
+                    names?.state.config?.references.find(
+                      (reference) => reference.contactId === contact.id,
+                    )
+                  "
+                  :corp-id="names?.state.config?.corpId"
+                />
               </slot>
             </td>
             <td>

@@ -12,7 +12,10 @@ export type Credentials = {
   returnPath?: string;
 };
 export interface Oidc {
-  signIn(restore?: boolean): Promise<void>;
+  signIn(
+    restore?: boolean,
+    options?: { sameSessionOnly: boolean },
+  ): Promise<void>;
   callback(url: string): Promise<Credentials>;
   clear(preserveAuthorizationState?: boolean): void;
 }
@@ -60,6 +63,7 @@ export class ApiFailure extends Error {
   constructor(
     public status: number,
     public requestId?: string,
+    public recovery?: string,
   ) {
     super("请求未完成");
   }
@@ -201,7 +205,10 @@ export function createSessionController({
     | undefined;
   let pending = false;
   let activeLogout: AbortController | undefined;
-  async function signIn(restore = false) {
+  async function signIn(
+    restore = false,
+    options?: { sameSessionOnly: boolean },
+  ) {
     if (state.phase === "authenticating") return;
     const current = ++epoch;
     credentials = undefined;
@@ -211,7 +218,7 @@ export function createSessionController({
     oidc.clear();
     reset("authenticating");
     try {
-      await oidc.signIn(restore);
+      await oidc.signIn(restore, options);
     } catch {
       if (current === epoch) {
         reset("error");
