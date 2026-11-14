@@ -1,13 +1,13 @@
 # 登录、会话与个人工作空间
 
-本文维护 Sage 的认证与个人空间。终端功能沿用同一会话，见[终端接入](terminals.md)。密码登录、注册与个人空间创建归 Mud。空间名使用查询返回值，成员角色来自 owner 契约。
+本文维护 Sage 的认证与个人空间。终端及企微功能沿用同一会话，见[终端接入](terminals.md)和[企微接入](wecom-onboarding.md)。密码登录、注册与个人空间创建归 Mud。空间名使用查询返回值，成员角色来自 owner 契约。
 
 ## 结构与依赖
 
-- `src/auth/session.ts` 的公开接口 `createSessionController({oidc,api})` 提供 signIn/callback/load/logout/retryLogout/dispose。组件只提交意图、显示状态，不请求服务。
+- `src/auth/session.ts` 的公开接口 `createSessionController({oidc,api})` 提供 signIn/callback/load/logout/retryLogout/dispose 及带 epoch/signal 校验的 withAccess。组件只提交意图、显示状态，不请求服务。
 - `src/auth/oidc.ts` 使用 oidc-client-ts 的无 UserStore `OidcClient` 完成授权码 + S256 PKCE。响应只返回 controller 的内存，不使用会保存令牌的 UserManager；API仅接受 access token。
-- `src/api/mud.ts` 消费 `maia-mud-client@0.2.0` 生成方法与 Schema。未知响应通过 TypeBox `Check` 校验，不运行 eval/Function，不手写后端 DTO。
-- 冻结制品 `vendor/maia-mud-client-0.2.0.tgz` 的 SHA256 为 `3de661e6b5097189c3fa15b85a045e05de23cc538a7f3a1c3f18c4baef2a8bc1`；`pnpm check:client` 核对制品、锁完整性及公开导出。该本地交付不是 registry 发布或生产签名证明。
+- `src/api/mud.ts` 消费 `maia-mud-client@0.5.0` 生成方法与 Schema。未知响应通过 TypeBox `Check` 校验，不运行 eval/Function，不手写后端 DTO。
+- 冻结制品 `vendor/maia-mud-client-0.5.0.tgz` 的 SHA256 为 `53c119750398d610c92a6d4df2c6a6bfbde009a7216fa6a6b22dcd9b2e46500f`；`pnpm check:client` 核对制品、锁完整性及公开导出。该本地交付不是 registry 发布或生产签名证明。
 
 ## 协议及隔离
 
@@ -17,13 +17,15 @@
 
 access/ID token仅在controller闭包内存。短期state/verifier/nonce只在当前标签页 `sage.oidc.` 前缀sessionStorage，600秒过期，回调成功/失败删除原操作；清理不碰其他前缀。离页立即丢弃内存会话与退出操作，但保留短期PKCE，以支持导航到认证页后返回。再次主动登录先清旧协议状态。OidcClient没有UserStore或令牌缓存，代次过期的底层完成结果不能恢复身份，也不能清除新授权的协议状态。
 
-每次登录/回调/退出/失权推进epoch。查询、回调、登录失败、退出结果均比较epoch后再写页面。已持有凭据的正常、加载、降级及读取错误状态通过canLogout明确保留退出操作；只有清除本机凭据后隐藏退出。401清空资料并引导登录；403/404清空资料并显示无权；503/网络/非法响应显示安全错误和可重试；仅成员失败保留已验证空间资料并显式降级，缺数据不显示零成员。关联编号只显示owner错误Schema中的requestId，不呈现异常全文或内部code。
+企微稳定业务页的认证返回路径随本次 OIDC state.data 保存并消费，严格路径与时序边界见[企微接入恢复](wecom-onboarding.md#接入与原操作恢复)。callback 仅在当前 epoch 且工作空间读取成功后返回可选导航路径，主入口再次校验后导航。
+
+每次登录/回调/退出/失权推进epoch。查询、回调、登录失败、退出结果均比较epoch后再写页面。已持有凭据的正常、加载、降级及读取错误状态通过canLogout明确保留退出操作；只有清除本机凭据后隐藏退出。会话/成员读取的401清空资料并引导登录，403/404清空资料并显示无权；企微资源级拒绝的隔离行为见[企微接入](wecom-onboarding.md#联系人同步与清理)；503/网络/非法响应显示安全错误和可重试；仅成员失败保留已验证空间资料并显式降级，缺数据不显示零成员。关联编号只显示owner错误Schema中的requestId，不呈现异常全文或内部code。
 
 退出立即清access和私有资料，原ID token仅保留在当前内存退出操作，与随机requestId固定。未知结果显示“本机已退出，会话撤销待核实”，600秒内只重试原输入。退出请求10秒超时并传递AbortSignal，中断网络后进入待核实；controller本身以有界race覆盖不响应abort的传输。中断不能证明服务端未执行，因此保留原hint/requestId，不新建撤销操作。pending页可重新登录，主动登录/回调/离页会中断原请求，旧结果通过epoch丢弃。新登录、回调或离页丢弃原操作；晚到结果不能影响新会话。端点cookie行为由Mud负责。
 
 ## 视觉及可访问性
 
-颜色由共享样式 token 定义。标题使用本机宋体，正文使用本机中文无衬线。空间标题是主要识别点，与成员表左对齐。顶部保留品牌和退出，登录后导航提供个人工作空间与终端入口。
+颜色由共享样式 token 定义。标题使用本机宋体，正文使用本机中文无衬线。空间标题是主要识别点，与成员表左对齐。顶部保留品牌和退出，登录后导航提供个人工作空间、终端与企业微信接入入口。
 
 自检：初稿原本可用多张统计卡，但本片只有本人及成员事实，已改为单一标题区域和表格。层级用于解释空间与成员，不增加虚构统计。颜色、字级、间距、圆角、边框和焦点等集中于 `src/styles/tokens.css`。布局在40rem切换，小屏账号和长空间名换行。语义标题、table/th、状态区、跳转链接、可见焦点及原生按钮保持键盘路径；无自动动画。空列表说明暂未读取并提供核对操作，不把失败伪装为空。
 

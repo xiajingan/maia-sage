@@ -1,3 +1,5 @@
+import { Check } from "typebox/value";
+import { InstallViewSchema } from "maia-mud-client/schemas";
 import { OidcClient, WebStorageStateStore } from "oidc-client-ts";
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import type { RuntimeConfig } from "../config";
@@ -23,6 +25,28 @@ export async function verifyIdentity(
   )
     throw new Error("身份验证失败");
   return payload.sub;
+}
+export function businessReturnPath(
+  value: unknown,
+  origin: string,
+): string | undefined {
+  if (typeof value !== "string") return;
+  try {
+    const url = new URL(value, origin);
+    if (url.origin !== origin || url.search || url.hash) return;
+    const route =
+      /^\/workspaces\/([^/]+)\/(?:wecom\/install-operations\/([^/]+)|channel-app-instances\/([^/]+)\/contacts)$/.exec(
+        url.pathname,
+      );
+    if (
+      route &&
+      Check(InstallViewSchema.properties.operationId, route[1]) &&
+      Check(InstallViewSchema.properties.operationId, route[2] ?? route[3])
+    )
+      return url.pathname;
+  } catch {
+    /* Invalid paths are discarded, never used as navigation destinations. */
+  }
 }
 const prefix = "sage.oidc.";
 export function createOidc(config: RuntimeConfig): Oidc {
@@ -57,6 +81,12 @@ export function createOidc(config: RuntimeConfig): Oidc {
       await client.clearStaleState();
       const request = await client.createSigninRequest({
         nonce: crypto.randomUUID(),
+        state: {
+          returnPath: businessReturnPath(
+            window.location.href,
+            config.apiBaseUrl,
+          ),
+        },
         ...(restore ? {} : { prompt: "login" }),
       });
       if (current !== generation) {
@@ -95,7 +125,15 @@ export function createOidc(config: RuntimeConfig): Oidc {
           createRemoteJWKSet(new URL(metadata.jwks_uri)),
         );
         if (current !== generation) throw new Error("登录已取消");
+        const data: unknown = state.data;
+        const returnPath = businessReturnPath(
+          data && typeof data === "object" && "returnPath" in data
+            ? data.returnPath
+            : undefined,
+          config.apiBaseUrl,
+        );
         return {
+          returnPath,
           accessToken: response.access_token,
           idToken: response.id_token,
           subject,

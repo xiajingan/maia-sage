@@ -1,17 +1,79 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, watch, onBeforeUnmount, computed } from "vue";
 import type { createSessionController } from "./auth/session";
+import type { WecomApi } from "./api/mud";
+import WecomWorkspace from "./features/wecom/WecomWorkspace.vue";
+import ContactWorkspace from "./features/contacts/ContactWorkspace.vue";
 import PersonalWorkspace from "./features/governance/PersonalWorkspace.vue";
 import TerminalWorkspace from "./features/terminals/TerminalWorkspace.vue";
 const props = defineProps<{
   controller?: ReturnType<typeof createSessionController>;
   bootError?: boolean;
+  api?: WecomApi;
 }>();
-const terminals = ref(false);
+const path = ref(
+  typeof globalThis.location === "undefined"
+    ? "/"
+    : globalThis.location.pathname,
+);
+const contactsRoute = computed(() =>
+  /^\/workspaces\/([1-9]\d*)\/channel-app-instances\/([1-9]\d*)\/contacts$/.exec(
+    path.value,
+  ),
+);
+const installRoute = computed(() =>
+  /^\/workspaces\/([1-9]\d*)\/wecom(?:\/install-operations\/([1-9]\d*))?$/.exec(
+    path.value,
+  ),
+);
+function navigate(target: string) {
+  path.value = target;
+  if (typeof globalThis.history !== "undefined")
+    globalThis.history.pushState(null, "", target);
+}
+function normalizeContactUrl() {
+  if (
+    contactsRoute.value &&
+    (globalThis.location.search || globalThis.location.hash)
+  )
+    globalThis.history.replaceState(null, "", globalThis.location.pathname);
+}
+function onPopState() {
+  path.value = globalThis.location.pathname;
+  normalizeContactUrl();
+}
+function focusMain() {
+  globalThis.document.getElementById("main")?.focus();
+}
+if (typeof globalThis.window !== "undefined") {
+  globalThis.window.addEventListener("popstate", onPopState);
+  globalThis.window.addEventListener("hashchange", onPopState);
+  normalizeContactUrl();
+}
+onBeforeUnmount(() => {
+  if (typeof globalThis.window !== "undefined")
+    globalThis.window.removeEventListener("popstate", onPopState);
+  if (typeof globalThis.window !== "undefined")
+    globalThis.window.removeEventListener("hashchange", onPopState);
+});
+function wecomPath() {
+  return `/workspaces/${props.controller?.state.session?.rootWorkspace.id}/wecom`;
+}
+function operationPath(id: string) {
+  const target = `${wecomPath()}/install-operations/${id}`;
+  path.value = target;
+  if (typeof globalThis.history !== "undefined")
+    globalThis.history.replaceState(null, "", target);
+}
+function contactsPath(instanceId: string) {
+  navigate(
+    `/workspaces/${props.controller?.state.session?.rootWorkspace.id}/channel-app-instances/${instanceId}/contacts`,
+  );
+}
 watch(
   () => props.controller?.state.session,
-  () => {
-    terminals.value = false;
+  (value, previous) => {
+    if (previous && value !== previous) navigate("/");
   },
   { flush: "sync" },
 );
@@ -20,6 +82,7 @@ watch(
   <a
     href="#main"
     class="skip"
+    @click.prevent="focusMain"
   >跳到主要内容</a>
   <header class="topbar">
     <div class="topbar-inner">
@@ -59,20 +122,45 @@ watch(
         aria-label="工作空间"
       >
         <button
-          :aria-current="terminals ? undefined : 'page'"
-          @click="terminals = false"
+          :aria-current="path === '/' ? 'page' : undefined"
+          @click="navigate('/')"
         >
           个人工作空间
         </button>
         <button
-          :aria-current="terminals ? 'page' : undefined"
-          @click="terminals = true"
+          :aria-current="path === '/terminals' ? 'page' : undefined"
+          @click="navigate('/terminals')"
         >
           终端
         </button>
+        <button
+          v-if="api"
+          :aria-current="installRoute ? 'page' : undefined"
+          @click="navigate(wecomPath())"
+        >
+          企业微信接入
+        </button>
       </nav>
+      <ContactWorkspace
+        v-if="contactsRoute && api && controller.state.session"
+        :key="path"
+        :api="api"
+        :session="controller"
+        :workspace-id="contactsRoute[1]!"
+        :instance-id="contactsRoute[2]!"
+      />
+      <WecomWorkspace
+        v-else-if="installRoute && api && controller.state.session"
+        :key="installRoute[1]"
+        :api="api"
+        :session="controller"
+        :workspace-id="installRoute[1]!"
+        :operation-id="installRoute[2]"
+        @operation="operationPath"
+        @contacts="contactsPath"
+      />
       <TerminalWorkspace
-        v-if="terminals && controller.state.session"
+        v-else-if="path === '/terminals' && controller.state.session"
         :controller="controller"
       />
       <PersonalWorkspace

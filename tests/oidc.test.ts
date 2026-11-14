@@ -26,7 +26,7 @@ function storage() {
     clear: () => map.clear(),
   };
 }
-// TC-SAGE-001
+// TC-SAGE-001 TC-SAGE-003
 test("真实oidc-client-ts验证state/nonce，离页保留PKCE，回调清理且token不进入storage", async () => {
   const store = storage();
   let authorization = "";
@@ -34,6 +34,8 @@ test("真实oidc-client-ts验证state/nonce，离页保留PKCE，回调清理且
   vi.stubGlobal("sessionStorage", store);
   vi.stubGlobal("window", {
     location: {
+      href:
+        config.apiBaseUrl + "/workspaces/1/channel-app-instances/20/contacts",
       assign: (url: string) => {
         authorization = url;
       },
@@ -42,6 +44,8 @@ test("真实oidc-client-ts验证state/nonce，离页保留PKCE，回调清理且
   const key = await generateKeyPair("RS256");
   const publicKey = await exportJWK(key.publicKey);
   let badNonce = false;
+  let holdToken: Promise<void> | undefined;
+  let exchanging = false;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -58,6 +62,8 @@ test("真实oidc-client-ts验证state/nonce，离页保留PKCE，回调清理且
           keys: [{ ...publicKey, alg: "RS256", kid: "1" }],
         });
       if (url.endsWith("/token")) {
+        exchanging = true;
+        if (holdToken) await holdToken;
         const nonce = new URL(authorization).searchParams.get("nonce");
         const id = await new SignJWT({
           sub: "2",
@@ -97,6 +103,9 @@ test("真实oidc-client-ts验证state/nonce，离页保留PKCE，回调清理且
       config.redirectUri + "?code=code&state=" + state,
     );
     expect(result.subject).toBe("2");
+    expect(result.returnPath).toBe(
+      "/workspaces/1/channel-app-instances/20/contacts",
+    );
     expect(store.length).toBe(1);
     expect(store.getItem("unrelated")).toBe("keep");
     await oidc.signIn(true);
@@ -106,6 +115,78 @@ test("真实oidc-client-ts验证state/nonce，离页保留PKCE，回调清理且
     await expect(
       oidc.callback(config.redirectUri + "?code=code&state=" + second),
     ).rejects.toThrow();
+    expect(store.length).toBe(1);
+    badNonce = false;
+    for (const [href, expected] of [
+      [
+        config.apiBaseUrl + "/workspaces/1/wecom/install-operations/10",
+        "/workspaces/1/wecom/install-operations/10",
+      ],
+      [
+        config.apiBaseUrl +
+          "/workspaces/1/channel-app-instances/20/contacts?unsafe=synthetic",
+        undefined,
+      ],
+      [
+        "https://outside.example/workspaces/1/wecom/install-operations/10",
+        undefined,
+      ],
+    ]) {
+      Object.assign(globalThis.window.location, { href });
+      await oidc.signIn(true);
+      const currentState = new URL(authorization).searchParams.get("state")!;
+      const protocol = JSON.parse(store.getItem("sage.oidc." + currentState)!);
+      expect(protocol.data.returnPath).toBe(expected);
+      expect(
+        (
+          await oidc.callback(
+            config.redirectUri + "?code=synthetic&state=" + currentState,
+          )
+        ).returnPath,
+      ).toBe(expected);
+    }
+    Object.assign(globalThis.window.location, {
+      href:
+        config.apiBaseUrl + "/workspaces/1/channel-app-instances/20/contacts",
+    });
+    for (const unsafe of [
+      "https://outside.example/workspaces/1/wecom/install-operations/10",
+      "//outside.example/workspaces/1/wecom/install-operations/10",
+      "/workspaces/1/channel-app-instances/20/contacts?token=synthetic",
+      "/workspaces/1/channel-app-instances/20/contacts#fragment",
+      "/workspaces/0/wecom/install-operations/10",
+      "/workspaces/9223372036854775808/wecom/install-operations/10",
+      "/workspaces/1/wecom/install-operations/not-an-id",
+      "/unrelated",
+      { path: "/workspaces/1/wecom/install-operations/10" },
+    ]) {
+      await oidc.signIn(true);
+      const currentState = new URL(authorization).searchParams.get("state")!;
+      const key = "sage.oidc." + currentState;
+      const protocol = JSON.parse(store.getItem(key)!);
+      protocol.data = { returnPath: unsafe };
+      store.setItem(key, JSON.stringify(protocol));
+      const result = await oidc.callback(
+        config.redirectUri + "?code=synthetic&state=" + currentState,
+      );
+      expect(result.returnPath).toBeUndefined();
+      expect(store.length).toBe(1);
+    }
+    let release!: () => void;
+    holdToken = new Promise((resolve) => {
+      release = resolve;
+    });
+    exchanging = false;
+    await oidc.signIn(true);
+    const lastState = new URL(authorization).searchParams.get("state");
+    const cancelled = oidc.callback(
+      config.redirectUri + "?code=synthetic&state=" + lastState,
+    );
+    const rejection = expect(cancelled).rejects.toThrow("登录已取消");
+    await vi.waitFor(() => expect(exchanging).toBe(true));
+    oidc.clear();
+    release();
+    await rejection;
     expect(store.length).toBe(1);
   } finally {
     vi.unstubAllGlobals();

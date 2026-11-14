@@ -37,6 +37,7 @@
   --line-accent: 4px;
   --focus-width: 3px;
   --focus-offset: 3px;
+  --contacts-table-width: 54rem;
   --content-width: 70rem;
   --reading-width: 42rem;
   --control-height: 2.75rem;
@@ -350,6 +351,22 @@ tbody tr:last-child td {
   font-size: var(--text-section);
   overflow-wrap: anywhere;
   user-select: all;
+}
+
+.feature-section {
+  margin-top: var(--space-5);
+}
+.action-link {
+  display: inline-block;
+  padding: var(--space-2) var(--space-5);
+  border: var(--line-thin) solid var(--color-line);
+  border-radius: var(--radius-control);
+  color: var(--color-action);
+  overflow-wrap: anywhere;
+}
+
+.contacts-table {
+  min-width: var(--contacts-table-width);
 }
 </style></head><body>
 <a class="skip" href="#main">跳到主要内容</a><header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark" aria-hidden="true">M</span><span>Maia</span></div><button id="logout">退出登录</button></div></header>

@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 const data = readFileSync(
-  new URL("../vendor/maia-mud-client-0.2.0.tgz", import.meta.url),
+  new URL("../vendor/maia-mud-client-0.5.0.tgz", import.meta.url),
 );
 if (
   createHash("sha256").update(data).digest("hex") !==
-  "3de661e6b5097189c3fa15b85a045e05de23cc538a7f3a1c3f18c4baef2a8bc1"
+  "53c119750398d610c92a6d4df2c6a6bfbde009a7216fa6a6b22dcd9b2e46500f"
 )
   throw new Error("client制品摘要不匹配");
 const lock = readFileSync(
@@ -14,7 +14,7 @@ const lock = readFileSync(
 );
 if (
   !lock.includes(
-    "sha512-P0xgm1EwfPE0umjm1/bxUvyRJmj5MDAuwr39GmJ+baqGkK9tPbmwVBiCPSGx6ekwPIANblxF18WzIjZ7CzfI5Q==",
+    "sha512-FCny8NAoCImz4vhZ5XaOAw5U8/wKLts1YuJ15GLRlw9LYjufrNN7mKwpV0FGXtYWWjl+zpz3FC931HqyhJr+dA==",
   )
 )
   throw new Error("client完整性未锁定");
@@ -27,6 +27,13 @@ for (const key of [
   "listTerminals",
   "getTerminal",
   "issueTerminalActivation",
+  "createWecomInstallOperation",
+  "getWecomInstallOperation",
+  "completeWecomInstallOperation",
+  "listChannelAppInstances",
+  "listContacts",
+  "requestContactSync",
+  "getContactSync",
 ])
   if (typeof client[key] !== "function") throw new Error("client导出缺失");
-console.log("maia-mud-client@0.2.0 SHA256、锁完整性与公开导出通过");
+console.log("maia-mud-client@0.5.0 SHA256、锁完整性与公开导出通过");

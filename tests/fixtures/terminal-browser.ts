@@ -5,6 +5,7 @@ import { createSessionController } from "../../src/auth/session";
 import "../../src/styles/tokens.css";
 import "../../src/styles/workspace.css";
 
+const api = createMudApi(window.location.origin);
 const controller = createSessionController({
   oidc: {
     signIn: async () => {},
@@ -15,7 +16,7 @@ const controller = createSessionController({
     }),
     clear: () => {},
   },
-  api: createMudApi(window.location.origin),
+  api,
 });
-createApp(App, { controller }).mount("#app");
+createApp(App, { controller, api }).mount("#app");
 void controller.callback("browser-fixture");

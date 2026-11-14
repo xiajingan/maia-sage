@@ -240,3 +240,29 @@ test("超时退出的晚到结果不能影响新登录或重试旧操作", async
     vi.useRealTimers();
   }
 });
+
+// TC-SAGE-003
+test("business return path is released only by the current successful callback", async () => {
+  const currentOidc = oidc();
+  currentOidc.callback.mockResolvedValue(
+    Object.assign(
+      { ...credentials },
+      { returnPath: "/workspaces/1/wecom/install-operations/10" },
+    ),
+  );
+  const controller = createSessionController({ oidc: currentOidc, api: api() });
+  expect(await controller.callback("current")).toBe(
+    "/workspaces/1/wecom/install-operations/10",
+  );
+  const late = deferred<typeof credentials & { returnPath: string }>();
+  currentOidc.callback.mockReturnValue(late.promise);
+  const old = controller.callback("old");
+  currentOidc.callback.mockResolvedValue(credentials);
+  await controller.callback("new-session");
+  late.resolve({
+    ...credentials,
+    returnPath: "/workspaces/1/channel-app-instances/20/contacts",
+  });
+  expect(await old).toBeUndefined();
+  expect(controller.state.phase).toBe("ready");
+});

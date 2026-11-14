@@ -9,6 +9,7 @@ export type Credentials = {
   accessToken: string;
   idToken: string;
   subject: string;
+  returnPath?: string;
 };
 export interface Oidc {
   signIn(restore?: boolean): Promise<void>;
@@ -97,6 +98,7 @@ export function createSessionController({
       if (current !== epoch) return;
       credentials = result;
       await load();
+      if (current === epoch && state.session) return result.returnPath;
     } catch {
       if (current === epoch) {
         credentials = undefined;
@@ -152,9 +154,10 @@ export function createSessionController({
     }
     state.requestId = requestId;
   }
-  async function withTerminalAccess<T>(
+  async function withAccess<T>(
     signal: AbortSignal,
     request: (token: string) => Promise<T>,
+    invalidateForbidden = false,
   ): Promise<T | undefined> {
     const current = epoch;
     const session = state.session;
@@ -167,19 +170,26 @@ export function createSessionController({
       if (isCurrent()) return result;
     } catch (error) {
       if (!isCurrent()) return;
-      if (error instanceof ApiFailure && [401, 403].includes(error.status))
+      if (
+        error instanceof ApiFailure &&
+        (error.status === 401 || (invalidateForbidden && error.status === 403))
+      )
         fail(error, false);
       else throw error;
     }
   }
   function issueTerminalActivation(signal: AbortSignal) {
-    return withTerminalAccess(signal, (token) =>
-      api.issueTerminalActivation(token, signal),
+    return withAccess(
+      signal,
+      (token) => api.issueTerminalActivation(token, signal),
+      true,
     );
   }
   function listTerminals(cursor: string | undefined, signal: AbortSignal) {
-    return withTerminalAccess(signal, (token) =>
-      api.listTerminals(token, cursor, signal),
+    return withAccess(
+      signal,
+      (token) => api.listTerminals(token, cursor, signal),
+      true,
     );
   }
   let operation:
@@ -284,5 +294,6 @@ export function createSessionController({
     dispose,
     listTerminals,
     issueTerminalActivation,
+    withAccess,
   };
 }
