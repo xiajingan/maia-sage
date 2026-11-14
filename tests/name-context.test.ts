@@ -397,3 +397,89 @@ test("弹窗被阻止只尝试一次，显式打开复用原操作", async () =>
   expect(h.requests).toHaveLength(1);
   c.dispose();
 });
+
+// TC-SAGE-004 — T8 review I1
+test.each([false, true])(
+  "closed_popup_reopen 保留原操作并替换通知来源（重开被阻止=%s）",
+  async (blocked) => {
+    const h = await harness((request) =>
+      Response.json(
+        request.method === "GET"
+          ? { ...operation, phase: "ready", nextAction: "complete" }
+          : request.url.endsWith("/complete")
+            ? { ...operation, phase: "completed", nextAction: "use_component" }
+            : operation,
+      ),
+    );
+    const oldPopup = {
+      closed: false,
+      location: { replace: vi.fn() },
+      close: vi.fn(),
+    };
+    const newPopup = {
+      closed: false,
+      location: { replace: vi.fn() },
+      close: vi.fn(),
+    };
+    const open = vi.fn().mockReturnValueOnce(oldPopup);
+    if (blocked) open.mockReturnValueOnce(null);
+    open.mockReturnValueOnce(newPopup);
+    vi.stubGlobal("window", {
+      location: { origin: "https://localhost" },
+      open,
+    });
+    const c = createNameContextController(h);
+    try {
+      c.select({ workspaceId: "1", instanceId: "20", scopeVersion: "1" });
+      await c.start("web");
+      oldPopup.closed = true;
+      c.openAuthorization();
+      expect(open).toHaveBeenCalledTimes(2);
+      if (blocked) {
+        expect(c.state.message).toContain("阻止");
+        await c.receive({
+          origin: "https://localhost",
+          source: oldPopup,
+          data: { operationId: "50" },
+        });
+        expect(h.requests).toHaveLength(1);
+        c.openAuthorization();
+        expect(open).toHaveBeenCalledTimes(3);
+      }
+      expect(oldPopup.location.replace).toHaveBeenCalledTimes(1);
+      expect(newPopup.location.replace).toHaveBeenCalledExactlyOnceWith(
+        operation.authorizationUrl,
+      );
+      expect(c.state.operation?.operationId).toBe("50");
+      expect(c.state.operation?.phase).toBe("awaiting_authorization");
+      await c.receive({
+        origin: "https://localhost",
+        source: oldPopup,
+        data: { operationId: "50" },
+      });
+      await c.receive({
+        origin: "https://evil.test",
+        source: newPopup,
+        data: { operationId: "50" },
+      });
+      expect(h.requests).toHaveLength(1);
+      await c.receive({
+        origin: "https://localhost",
+        source: newPopup,
+        data: { operationId: "50" },
+      });
+      expect(
+        h.requests.some((request) =>
+          request.url.endsWith("/name-context-operations/50/complete"),
+        ),
+      ).toBe(true);
+      expect(
+        h.requests.filter((request) =>
+          request.url.endsWith("/name-context-operations"),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      c.dispose();
+    }
+  },
+);

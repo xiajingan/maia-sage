@@ -351,6 +351,7 @@ export function createNameContextController({
       return;
     }
     if (op.environment === "web") {
+      if (popup?.closed) popup = null;
       if (!popup && allowOpen) popup = window.open("about:blank", "_blank");
       if (popup) popup.location.replace(url.href);
       else state.message = "浏览器阻止了授权窗口，请点击“打开姓名授权”重试。";

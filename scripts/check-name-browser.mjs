@@ -95,6 +95,7 @@ try {
     )
       errors.push("console-error");
   });
+  let holdAuthorization = true;
   let cookieRequests = 0;
   let mode = "ready",
     queries = 0,
@@ -155,7 +156,12 @@ try {
     if (
       url.hostname === "login.work.weixin.qq.com" &&
       url.pathname === "/wwlogin/sso/login"
-    )
+    ) {
+      if (holdAuthorization)
+        return route.fulfill({
+          contentType: "text/html; charset=utf-8",
+          body: `<p>合成授权等待页；可关闭后从原页面继续。</p><a href="${origin}/wecom/name-context-result?operationId=50&amp;code=synthetic#synthetic">完成合成授权</a>`,
+        });
       return route.fulfill({
         status: 302,
         headers: {
@@ -165,6 +171,7 @@ try {
         },
         body: "",
       });
+    }
     assert.equal(
       url.origin,
       origin,
@@ -280,6 +287,15 @@ try {
     });
   });
   const button = (name) => page.getByRole("button", { name, exact: true });
+  await page.addInitScript(() => {
+    const open = globalThis.open;
+    globalThis.__syntheticPopups = [];
+    globalThis.open = function (...args) {
+      const popup = open.apply(globalThis, args);
+      globalThis.__syntheticPopups.push(popup);
+      return popup;
+    };
+  });
   await page.goto(origin + path);
   await expect(button("授权姓名展示")).toBeVisible();
   sdkGate = new Promise((resolve) => {
@@ -287,7 +303,44 @@ try {
   });
   const popupPromise = context.waitForEvent("page");
   await button("授权姓名展示").click();
-  const popup = await popupPromise;
+  const oldPopup = await popupPromise;
+  await oldPopup.waitForURL(
+    (url) => url.hostname === "login.work.weixin.qq.com",
+  );
+  await oldPopup.close();
+  assert.equal(
+    await page.evaluate(() => globalThis.__syntheticPopups[0].closed),
+    true,
+  );
+  const reopened = context.waitForEvent("page", { timeout: 2000 });
+  await button("打开姓名授权").click();
+  const popup = await reopened;
+  await popup.waitForURL((url) => url.hostname === "login.work.weixin.qq.com");
+  assert.equal(creates, 1);
+  assert.equal(
+    await page.evaluate(() => globalThis.__syntheticPopups.length),
+    2,
+  );
+  await page.evaluate(() => {
+    globalThis.dispatchEvent(
+      new globalThis.MessageEvent("message", {
+        origin: globalThis.location.origin,
+        source: globalThis.__syntheticPopups[0],
+        data: { operationId: "50" },
+      }),
+    );
+    globalThis.dispatchEvent(
+      new globalThis.MessageEvent("message", {
+        origin: "https://wrong.example",
+        source: globalThis.__syntheticPopups[1],
+        data: { operationId: "50" },
+      }),
+    );
+  });
+  assert.equal(queries, 0);
+  holdAuthorization = false;
+  assert.equal(await popup.evaluate(() => Boolean(globalThis.opener)), true);
+  await popup.getByRole("link", { name: "完成合成授权", exact: true }).click();
   await expect.poll(() => queries).toBe(1);
   await expect(page.locator("ww-open-data")).toHaveCount(0);
   phases.pop()();
@@ -445,7 +498,7 @@ try {
       creates,
       cookieRequests,
       cases:
-        "popup source/origin, no-code result, init-before-mount, error/update, scope/revocation, wrong corporation, expiry, missing loginSuite, empty/mobile, isolated browser",
+        "popup close/reopen/source replacement, source/origin, no-code result, init-before-mount, error/update, scope/revocation, wrong corporation, expiry, missing loginSuite, empty/mobile, isolated browser",
     }),
   );
 } finally {
