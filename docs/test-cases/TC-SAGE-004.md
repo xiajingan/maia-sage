@@ -39,3 +39,7 @@ story: US-006
 ## 执行
 
 `pnpm exec vitest run tests/name-context.test.ts tests/wecom-name.test.ts tests/oidc.test.ts tests/session.test.ts`，`pnpm check:name-browser`、`pnpm check:name-recovery-browser`。前置静态/类型/生成客户端/构建/原型检查沿本工程package.json。
+
+## 跨工程验证回指
+
+本用例的跨工程组合验证见[TC-014](../../../docs/test-cases/TC-014.md)、[TC-017](../../../docs/test-cases/TC-017.md)、[TC-018](../../../docs/test-cases/TC-018.md)。具体执行结果及真实平台证据由总仓对应用例与迭代报告维护；此处回指不表示真实平台验收已通过。
