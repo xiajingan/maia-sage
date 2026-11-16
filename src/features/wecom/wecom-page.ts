@@ -53,6 +53,8 @@ export function createWecomPage({
   let pending: StartInput | undefined;
   let bound = session.state.session;
   let listCursor: string | undefined;
+  let missingSavedOperation: string | undefined;
+  let needsListConfirmation = false;
   function save() {
     try {
       storage?.setItem(
@@ -61,10 +63,12 @@ export function createWecomPage({
           workspaceId: bound?.rootWorkspace.id,
           operationId: state.operationId,
           pending,
+          mustQuery: state.mustQuery,
         }),
       );
+      return Boolean(storage);
     } catch {
-      /* Recovery storage is optional. */
+      return false;
     }
   }
   function clear() {
@@ -81,6 +85,8 @@ export function createWecomPage({
     state.mustQuery = false;
     state.instanceCursor = undefined;
     listCursor = undefined;
+    missingSavedOperation = undefined;
+    needsListConfirmation = false;
     state.operationId = undefined;
     pending = undefined;
   }
@@ -103,10 +109,16 @@ export function createWecomPage({
   }
   function fail(error: unknown, list = false) {
     if (error instanceof ApiFailure && [403, 404].includes(error.status)) {
+      const originalPending = pending;
+      const originalOperation = state.mustQuery ? state.operationId : undefined;
       clear();
+      pending = originalPending;
+      state.unknownStart = Boolean(pending);
+      state.operationId = originalOperation;
+      state.mustQuery = Boolean(originalOperation);
       state.forbidden = true;
       try {
-        storage?.removeItem(STORAGE_KEY);
+        if (!pending && !state.mustQuery) storage?.removeItem(STORAGE_KEY);
       } catch {
         /* Optional storage. */
       }
@@ -125,6 +137,7 @@ export function createWecomPage({
       token: string,
       signal: AbortSignal,
     ) => Promise<GetWecomInstallOperationResponse>,
+    restoringKnownReference = false,
   ) {
     if (!allowed() || state.busy) return;
     const signal = abort.signal;
@@ -136,16 +149,35 @@ export function createWecomPage({
         request(token, signal),
       );
       if (!result || signal.aborted || !allowed()) return;
+      missingSavedOperation = undefined;
       state.operation = result;
       state.operationId = result.operationId;
       pending = undefined;
       state.unknownStart = false;
-      state.mustQuery = false;
+      state.mustQuery = result.nextAction === "query_original";
       save();
     } catch (error) {
       if (!signal.aborted && allowed()) {
-        state.unknownStart = !state.operationId;
-        state.mustQuery = Boolean(state.operationId);
+        if (
+          restoringKnownReference &&
+          error instanceof ApiFailure &&
+          error.status === 404 &&
+          state.operationId &&
+          !pending &&
+          !state.mustQuery
+        ) {
+          // A rejected saved operation is not proof of current Workspace access.
+          missingSavedOperation = state.operationId;
+          await refreshInstances();
+          return;
+        }
+        if (!(
+          error instanceof ApiFailure && [403, 404].includes(error.status)
+        )) {
+          state.unknownStart = !state.operationId;
+          state.mustQuery = Boolean(state.operationId);
+          save();
+        }
         fail(error);
       }
     } finally {
@@ -156,6 +188,7 @@ export function createWecomPage({
     if (
       !allowed() ||
       state.busy ||
+      needsListConfirmation ||
       session.state.session?.membership.role !== "manager" ||
       state.operationId ||
       pending
@@ -181,62 +214,95 @@ export function createWecomPage({
       );
   }
   async function resume(id?: string) {
-    if (!allowed()) return;
+    if (disposed || !bound || bound !== session.state.session) return;
+    if (!id) {
+      // A list navigation cancels the old view, but never discards unknown writes.
+      const originalPending = pending;
+      const originalOperation = state.mustQuery ? state.operationId : undefined;
+      clear();
+      pending = originalPending;
+      state.unknownStart = Boolean(pending);
+      state.operationId = originalOperation;
+      state.mustQuery = Boolean(originalOperation);
+      state.forbidden = false;
+      needsListConfirmation = true;
+    } else if (!allowed()) return;
+    let restoringKnownReference = false;
     if (id && Check(InstallViewSchema.properties.operationId, id)) {
       if (id !== state.operationId) clear();
       state.operationId = id;
-    } else {
-      try {
-        const saved: unknown = JSON.parse(
-          storage?.getItem(STORAGE_KEY) ?? "null",
-        );
+    }
+    try {
+      const saved: unknown = JSON.parse(
+        storage?.getItem(STORAGE_KEY) ?? "null",
+      );
+      if (
+        saved &&
+        typeof saved === "object" &&
+        "workspaceId" in saved &&
+        saved.workspaceId === bound.rootWorkspace.id
+      ) {
         if (
-          saved &&
-          typeof saved === "object" &&
-          "workspaceId" in saved &&
-          saved.workspaceId === bound?.rootWorkspace.id
+          "operationId" in saved &&
+          typeof saved.operationId === "string" &&
+          Check(InstallViewSchema.properties.operationId, saved.operationId)
         ) {
           if (
-            "operationId" in saved &&
-            typeof saved.operationId === "string" &&
-            Check(InstallViewSchema.properties.operationId, saved.operationId)
-          )
-            state.operationId = saved.operationId;
-          else if (
-            "pending" in saved &&
-            saved.pending &&
-            typeof saved.pending === "object" &&
-            "clientRequestId" in saved.pending &&
-            typeof saved.pending.clientRequestId === "string" &&
-            saved.pending.clientRequestId.length > 0 &&
-            saved.pending.clientRequestId.length <= 128 &&
-            "mode" in saved.pending &&
-            ["admin", "member"].includes(String(saved.pending.mode))
+            (!id && !pending && !state.operationId) ||
+            id === saved.operationId
           ) {
-            pending = {
-              clientRequestId: saved.pending.clientRequestId,
-              mode: saved.pending.mode as StartInput["mode"],
-            };
-            state.unknownStart = true;
+            state.operationId = saved.operationId;
+            // Legacy records cannot prove that no complete request was left unknown.
+            state.mustQuery =
+              state.mustQuery ||
+              !("mustQuery" in saved && saved.mustQuery === false);
+            restoringKnownReference = !id && !state.mustQuery;
           }
+        } else if (
+          !id &&
+          !state.operationId &&
+          "pending" in saved &&
+          saved.pending &&
+          typeof saved.pending === "object" &&
+          "clientRequestId" in saved.pending &&
+          typeof saved.pending.clientRequestId === "string" &&
+          saved.pending.clientRequestId.length > 0 &&
+          saved.pending.clientRequestId.length <= 128 &&
+          "mode" in saved.pending &&
+          ["admin", "member"].includes(String(saved.pending.mode))
+        ) {
+          pending = {
+            clientRequestId: saved.pending.clientRequestId,
+            mode: saved.pending.mode as StartInput["mode"],
+          };
+          state.unknownStart = true;
         }
-      } catch {
-        /* Invalid recovery references grant no access. */
       }
+    } catch {
+      /* Invalid recovery references grant no access. */
     }
-    await query();
+    const operationId = state.operationId;
+    if (operationId)
+      await execute(
+        (token, signal) =>
+          api.getWecomInstallOperation(token, operationId, signal),
+        restoringKnownReference,
+      );
   }
   async function complete() {
     const op = state.operation;
     if (op?.nextAction !== "complete" || state.mustQuery) return;
-    await execute((token, signal) =>
-      api.completeWecomInstallOperation(
+    await execute((token, signal) => {
+      // Persist uncertainty before dispatch; failed storage must not leave a stale false marker.
+      state.mustQuery = true;
+      if (!save()) throw new Error("无法保存原操作核对标记");
+      return api.completeWecomInstallOperation(
         token,
         op.operationId,
         { rowVersion: op.rowVersion },
         signal,
-      ),
-    );
+      );
+    });
   }
   function newOperation() {
     if (
@@ -268,7 +334,26 @@ export function createWecomPage({
       const result = await session.withAccess(signal, (token) =>
         api.listChannelAppInstances(token, workspaceId, cursor, signal),
       );
-      if (result && !signal.aborted && allowed()) state.instances = result;
+      if (result && !signal.aborted && allowed()) {
+        state.instances = result;
+        needsListConfirmation = false;
+        if (
+          missingSavedOperation &&
+          state.operationId === missingSavedOperation &&
+          !pending &&
+          !state.mustQuery
+        ) {
+          state.operation = undefined;
+          state.operationId = undefined;
+          missingSavedOperation = undefined;
+          state.message = "原接入记录已不可访问，已返回当前空间的接入列表。";
+          try {
+            storage?.removeItem(STORAGE_KEY);
+          } catch {
+            /* Optional storage; the denied operation is never submitted again automatically. */
+          }
+        }
+      }
     } catch (error) {
       if (!signal.aborted && allowed()) fail(error, true);
     } finally {

@@ -78,18 +78,19 @@ watch(
     if (id) emit("operation", id);
   },
 );
+async function resumeRoute(id?: string) {
+  if (!inWorkspace.value) return;
+  await page.resume(id);
+  if (!state.instances && !state.listError) await page.refreshInstances();
+}
 watch(
   () => props.operationId,
-  (id) => {
-    if (id && id !== state.operation?.operationId) void page.resume(id);
+  (id, previous) => {
+    if ((id && id !== state.operation?.operationId) || (!id && previous))
+      void resumeRoute(id);
   },
 );
-onMounted(async () => {
-  if (inWorkspace.value) {
-    await page.resume(props.operationId);
-    await page.refreshInstances();
-  }
-});
+onMounted(() => resumeRoute(props.operationId));
 onBeforeUnmount(page.dispose);
 </script>
 <template>
@@ -237,12 +238,12 @@ onBeforeUnmount(page.dispose);
           <div class="terminal-actions">
             <button
               class="primary"
-              :disabled="state.busy"
+              :disabled="state.busy || state.listBusy || Boolean(state.listError)"
               @click="page.start('member')"
             >
               成员扫码接入
             </button><button
-              :disabled="state.busy"
+              :disabled="state.busy || state.listBusy || Boolean(state.listError)"
               @click="page.start('admin')"
             >
               管理员接入

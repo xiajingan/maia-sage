@@ -20,11 +20,15 @@
 
 授权入口只由用户在新窗口打开，保留原 Maia 会话；回到原窗口后查询原操作，只有服务端 nextAction 为 complete 时允许提交所见 rowVersion。窗口不开启自动重试、循环授权或原始 code 传递。页面不读取返回页 code，也不通过 postMessage 接收凭据。结果未知时保留原操作并先查询，完成请求未知后在取得新查询结果前关闭完成按钮。
 
-create 尚未返回 operationId 时，页面保留原 clientRequestId 和 mode，由用户明确「核对原发起请求」重复同内容的幂等请求，不生成新 key。已取得 operationId 后只查询原 ID，不重放一次性邀请。新操作只在服务端允许 start_new 后由用户明确发起。
+create 尚未返回 operationId 时，页面保留原 clientRequestId 和 mode，由用户明确「核对原发起请求」重复同内容的幂等请求，不生成新 key。已取得 operationId 后只查询原 ID，不重放一次性邀请。已读取的原操作只有服务端允许 start_new 后才可由用户明确重新发起；正常列表对已确认不可读的普通恢复引用另按下述边界处理。
 
-sessionStorage 的 `sage.wecom.install` 只存 workspaceId、operationId，或尚无结果的原幂等输入。它不存 Bearer、code、launch URL、成员资料或权限。恢复引用只用来查询，归属与 sid 仍由服务端校验。存储不可用时，当前内存流程与已知稳定 operationId 查询仍可使用。
+sessionStorage 的 `sage.wecom.install` 只存 workspaceId、operationId、非秘密布尔 mustQuery，或尚无结果的原幂等输入。它不存 Bearer、code、launch URL、成员资料或权限。恢复引用只用来查询，归属与 sid 仍由服务端校验。存储不可用时，当前内存查询与已知稳定 operationId 查询仍可使用；complete 必须先成功持久化 mustQuery=true 才能发送，保存失败则停止提交，避免遗留的 false 标记掩盖未知结果。短token恢复在dispatch前挡住complete时，不写已发送标记。成功查询/完成只依据服务端 nextAction 更新标记，query_original 仍保持待核对；缺少该字段的旧格式引用保守视为待核对，须先成功读取才能解除。
 
-认证往返的业务返回路径绑定在既有 OIDC state.data 中。保存、callback 读取和主入口导航均校验仅允许上述安装结果与联系人路径，必须同源且没有 query/hash、ID 按生成 Schema 验证正十进制 BIGINT 上界。OidcClient 消费协议 state 后删除记录；身份签名、nonce、generation 与会话 epoch/读取成功条件都成立后，controller.callback 才释放可选 returnPath。它只表示导航意图，不授予读取权限；姓名授权返回另用显式同会话恢复选项，见[姓名展示](#姓名组件与页面授权)。
+正常接入列表仅自动恢复本Workspace的已知operationId。只有保存的mustQuery明确为false、没有未知create输入，且该自动查询返回404时，页面才继续查询当前Workspace实例列表；列表成功后移除这一不可读引用，显示当前列表，由管理者显式开始新的操作。没有自动create、complete或邀请重放。403、显式旧操作深链接/主动查询的404、列表权限拒绝仍显示拒绝；列表503/网络错误保留原引用并阻止新建。读取成功的新事实会取消之前的“旧引用不可读”判断，迟到列表不得清掉后来核对成功的操作。
+
+从旧深链接返回同一Workspace的正常列表时，组件重新进入已有resume/list流程，取消旧请求并核对当前列表权限；不因复用组件而永久保留旧拒绝，也不把旧拒绝当作当前可创建的证明。未知create的原key和complete待核对operationId在资源拒绝及返回列表时继续保留，不通过更换key或清引用绕过核对。旧格式引用无法证明历史上没有unknown，因此旧sid404仍拒绝；这项兼容限制不推断业务已失败或已完成。
+
+认证往返的业务返回路径绑定在既有 OIDC state.data 中。保存、callback读取和主入口导航沿[认证返回白名单](authentication.md#协议及隔离)校验当前稳定入口，必须同源且没有query/hash，ID按生成Schema验证正十进制BIGINT上界。OidcClient 消费协议 state 后删除记录；身份签名、nonce、generation 与会话 epoch/读取成功条件都成立后，controller.callback 才释放可选 returnPath。它只表示导航意图，不授予读取权限；姓名授权返回另用显式同会话恢复选项，见[姓名展示](#姓名组件与页面授权)。
 
 安装完成仅表示可信绑定或恢复完成。实例卡片分别展示安装、联系人同步、会话存档、终端条件、范围核对和最近可信时间；没有可执行 Account 时不显示 Tea/Celt 就绪。部分同步与范围待核对不会被安装完成覆盖。
 
@@ -38,7 +42,7 @@ sessionStorage 的 `sage.wecom.install` 只存 workspaceId、operationId，或�
 
 未知补同步的幂等输入还固定其原事实代次。后来取得新页面事实后，用户仍可用原 key 核对；成功只确认原请求并解除未知标记，不用原请求的旧同步摘要覆盖新页面；本次重核若收到当前权限拒绝，仍按当前请求的代次执行资料清理，不因原输入较旧而忽略拒绝。
 
-正常、空、加载、请求错误、受限/部分覆盖及无权都有明确页面。联系人读取失败时移除旧资料，保留安全恢复提示；已知同步摘要可独立呈现。实例列表刷新失败可以保留上次实例状态并注明来源。资源级 403/404 清空并锁定对应 feature，安装恢复引用也从本机移除，避免再次进入时反复查询已失效的旧 sid 操作；保留 Maia 会话；401 沿既有会话失效路径。退出、会话/根切换、实例切换或卸载时取消请求、清空局部资料；请求还检查当前 Session 引用、epoch、signal 及页面读取代次，迟到旧结果/拒绝不能恢复资料或清除后来会话。既有终端包装保留原 403 会话处理兼容行为。
+正常、空、加载、请求错误、受限/部分覆盖及无权都有明确页面。联系人读取失败时移除旧资料，保留安全恢复提示；已知同步摘要可独立呈现。实例列表刷新失败可以保留上次实例状态并注明来源。资源级403/404清空资料并锁定对应feature；普通安装恢复引用按上文区分自动列表与显式操作，未知输入/待核对引用不会被拒绝处理清空。保留Maia会话；401 沿既有会话失效路径。退出、会话/根切换、实例切换或卸载时取消请求、清空局部资料；请求还检查当前 Session 引用、epoch、signal 及页面读取代次，迟到旧结果/拒绝不能恢复资料或清除后来会话。既有终端包装保留原 403 会话处理兼容行为。
 
 ## 姓名组件与页面授权
 

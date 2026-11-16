@@ -23,13 +23,15 @@ US-038 AC-01、03、04、05、08、09、10、11、12、13 的 Sage 接入/未知
 4. 在实例联系人页逐页读取并返回首页。成员标识与命名空间独立标记，职位/头像字段的未获准、未返回、待核对明确；姓名默认不可展示，不用标识冒充。pending 空列表不代表全量为零。
 5. manager 对当前可访问范围补同步，未知时核对同一个 clientRequestId；有 syncId 时查询原同步。当前同步应答若与现页范围不一致，移除不相容的页面并等待刷新，不误复现旧资料或阻塞下一次刷新。在较早同步查询等待期间刷新并取得当前页面后，旧查询返回不能回退当前范围/同步进度或清掉新页；同范围更换 syncId、同 syncId 更换 rowVersion 的交错同样不能回退。失效查询的错误也不向新页添加旧错误提示；核对原未知请求仍使用原 key，其成功只确认原请求，不覆盖后来取得的页面事实；此时当前请求的权限拒绝仍清空资料。
 6. 请求错误、部分覆盖、范围待核对和失权分别呈现。资源级 403/404 清空资料/动作而不误退出 Maia。跨根或实例、退出和新会话之后，旧响应及旧拒绝不能恢复资料或清除新会话。
-7. 在桌面与移动 Chrome 检查正常、空、加载、错误、降级和无权页面，原型提供同类状态。联系人表内滚动不使整页溢出，控制台没有异常。
+7. 正常列表自动恢复当前Workspace的已知旧operationId，且其mustQuery明确为false：旧sid GET404后必须先成功核对当前实例列表，才能移除旧引用、显示管理员接入；期间和完成后都不自动POST。显式旧深链接/主动查询404、自动恢复403仍拒绝；当前列表403/404/503不能取得创建入口，跨Workspace路由仍拒绝。旧查询恢复成功后，不得被后来列表误清；退出后的迟到列表不能恢复旧资料或移除引用。
+8. 从旧深链接拒绝页点击正常接入列表，同一Vue组件重新核对列表，成功后可显式新建；初次挂载不重复恢复。未知create原key遇403/404仍保留；complete实际发送前保存mustQuery=true，保存失败不发送，到期恢复在发送前拦截时不标假已发。query_original返回仍保持待核对；旧格式缺标记保守拒绝丢弃，不能把历史unknown猜成普通旧引用。
+9. 在桌面与移动 Chrome 检查正常、空、加载、错误、降级和无权页面，原型提供同类状态。联系人表内滚动不使整页溢出，控制台没有异常。
 
 ## 测试代码
 
-- [tests/wecom.test.ts](../../tests/wecom.test.ts)：`unknown_keeps_operation`、`result_reload_not_invite`、未知原发起核对与完成未知限制。
+- [tests/wecom.test.ts](../../tests/wecom.test.ts)：`unknown_keeps_operation`、`result_reload_not_invite`、未知原发起核对与完成未知限制、旧引用404与当前列表核验、legacy/unknown存储保护、跨Workspace及迟到响应。
 - [tests/contacts.test.ts](../../tests/contacts.test.ts)：`contact_partial_and_permissions`、分页与双向同步范围竞态、`older sync query cannot replace accepted page facts` 三种交错、旧查询失败隔离、原未知请求核对及当前 401/403 清理。
-- [scripts/check-wecom-browser.mjs](../../scripts/check-wecom-browser.mjs)：`pnpm check:wecom-browser`，真实 Chrome 中的合成 Vue 流程与原型验证。
+- [scripts/check-wecom-browser.mjs](../../scripts/check-wecom-browser.mjs)：`pnpm check:wecom-browser`，真实Chrome中的合成Vue流程与原型验证，包含同组件旧深链接404返回正常列表、无自动POST及显式新admin。
 - [tests/terminals.test.ts](../../tests/terminals.test.ts) 保留旧终端会话行为回归；认证返回路径验证见 [tests/oidc.test.ts](../../tests/oidc.test.ts) 与 [tests/session.test.ts](../../tests/session.test.ts)。
 
 ## 结果边界

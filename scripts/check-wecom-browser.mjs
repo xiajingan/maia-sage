@@ -179,9 +179,14 @@ try {
       });
     if (path.endsWith("/install-operations/10")) {
       queryReads++;
-      return mode === "operation-error"
-        ? route.fulfill({ status: 503, json: safeError })
-        : route.fulfill({ json: operation });
+      return mode === "operation-missing"
+        ? route.fulfill({
+            status: 404,
+            json: { ...safeError, code: "NOT_FOUND" },
+          })
+        : mode === "operation-error"
+          ? route.fulfill({ status: 503, json: safeError })
+          : route.fulfill({ json: operation });
     }
     if (path.endsWith("/contacts")) {
       if (waitingContacts) await waitingContacts;
@@ -409,6 +414,32 @@ try {
     await page.goto(`${origin}/workspaces/9/channel-app-instances/20/contacts`);
     await expect(page.getByRole("alert")).toContainText("不匹配");
     await expect(row).toHaveCount(0);
+    // The App keeps the same Workspace component when only operationId changes.
+    mode = "operation-missing";
+    await page.goto(`${origin}/workspaces/1/wecom/install-operations/10`);
+    await expect(
+      page.getByRole("heading", { name: "无法访问此接入" }),
+    ).toBeVisible();
+    await expect(button("管理员接入")).toHaveCount(0);
+    const postsBeforeList = installPosts;
+    await button("企业微信接入").click();
+    await expect(page).toHaveURL(`${origin}/workspaces/1/wecom`);
+    await expect(button("管理员接入")).toBeEnabled();
+    assert.equal(installPosts, postsBeforeList);
+    mode = "ready";
+    Object.assign(operation, {
+      operationId: "11",
+      phase: "awaiting_authorization",
+      nextAction: "authorize",
+      safeReason: null,
+      instanceId: null,
+      launch: { kind: "admin", url: "https://synthetic.example/new-install" },
+    });
+    await button("管理员接入").click();
+    await expect(page).toHaveURL(
+      `${origin}/workspaces/1/wecom/install-operations/11`,
+    );
+    assert.equal(installPosts, postsBeforeList + 1);
     for (const prototype of ["wecom-onboarding", "contacts"]) {
       await page.goto(`${origin}/prototypes/${prototype}.html`);
       for (const state of [
