@@ -549,3 +549,151 @@ test("已取消/离页请求不启动恢复，恢复前发出的迟到401不污�
   await c.withAccess(new AbortController().signal, async () => "never");
   expect(o.signIn).toHaveBeenCalledTimes(2);
 });
+
+// TC-SAGE-001 — already dispatched requests end after recovery, never replay.
+test.each(["business", "session", "members"] as const)(
+  "%s请求发送后跨到期401仅恢复一次，不污染恢复阻止标记",
+  async (endpoint) => {
+    let now = 1_000_000;
+    const o = oidc();
+    o.callback.mockResolvedValue({ ...credentials, expiresAt: now + 300_000 });
+    const a = api();
+    const c = createSessionController({ oidc: o, api: a, now: () => now });
+    await c.callback("initial");
+    now += 294_000;
+    const request = vi.fn(async () => {
+      now += 6_000;
+      throw new ApiFailure(401);
+    });
+    if (endpoint === "business")
+      expect(
+        await c.withAccess(new AbortController().signal, request),
+      ).toBeUndefined();
+    else {
+      a[endpoint].mockImplementationOnce(request);
+      await c.load();
+    }
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(o.signIn).toHaveBeenCalledExactlyOnceWith(true, {
+      sameSessionOnly: true,
+    });
+    expect(c.state.phase).toBe("authenticating");
+    expect(localStorage.getItem("sage.auth.recovery-blocked")).toBeNull();
+  },
+);
+
+// TC-SAGE-001 — only actual expiry plus 401 permits recovery.
+test.each(["business", "session", "members"] as const)(
+  "%s在途错误严格区分到期401与提前窗/其他错误",
+  async (endpoint) => {
+    for (const [remaining, error] of [
+      [1_000, new ApiFailure(401)],
+      [5_000, new ApiFailure(401)],
+      [0, new ApiFailure(503)],
+      [0, new Error("network")],
+      [0, new ApiFailure(403)],
+      [0, new ApiFailure(404)],
+    ] as const) {
+      vi.stubGlobal("localStorage", memoryStorage());
+      let now = 1_000_000;
+      const o = oidc();
+      o.callback.mockResolvedValue({
+        ...credentials,
+        expiresAt: now + 300_000,
+      });
+      const a = api();
+      const c = createSessionController({ oidc: o, api: a, now: () => now });
+      await c.callback("initial");
+      now += 294_000;
+      const request = vi.fn(async () => {
+        now += 6_000 - remaining;
+        throw error;
+      });
+      if (endpoint === "business") {
+        const result = c.withAccess(new AbortController().signal, request);
+        if (error instanceof ApiFailure && error.status === 401) await result;
+        else await expect(result).rejects.toBe(error);
+      } else {
+        a[endpoint].mockImplementationOnce(request);
+        await c.load();
+        expect(c.state.phase).toBe(
+          error instanceof ApiFailure && [401, 403, 404].includes(error.status)
+            ? error.status === 401
+              ? "signed-out"
+              : "forbidden"
+            : endpoint === "members"
+              ? "degraded"
+              : "error",
+        );
+      }
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(o.signIn).not.toHaveBeenCalled();
+      c.dispose();
+    }
+  },
+);
+
+test.each(["session", "members"] as const)(
+  "callback的%s在途到期401停止而不循环授权",
+  async (endpoint) => {
+    let now = 1_000_000;
+    const o = oidc();
+    o.callback.mockResolvedValue({ ...credentials, expiresAt: now + 6_000 });
+    const a = api();
+    a[endpoint].mockImplementationOnce(async () => {
+      now += 6_000;
+      throw new ApiFailure(401);
+    });
+    const c = createSessionController({ oidc: o, api: a, now: () => now });
+    await c.callback("callback");
+    expect(a[endpoint]).toHaveBeenCalledTimes(1);
+    expect(o.signIn).not.toHaveBeenCalled();
+    expect(c.state.phase).toBe("error");
+    expect(c.state.session).toBeUndefined();
+  },
+);
+
+test.each(["concurrent", "abort", "logout", "switch", "dispose"])(
+  "到期迟到401在%s情况下不重放、不额外导航或污染新代次",
+  async (outcome) => {
+    let now = 1_000_000;
+    const o = oidc();
+    o.callback.mockImplementation(async () => ({
+      ...credentials,
+      expiresAt: now + 300_000,
+    }));
+    const c = createSessionController({ oidc: o, api: api(), now: () => now });
+    await c.callback("initial");
+    const release = deferred<void>();
+    const request = vi.fn(async () => {
+      await release.promise;
+      throw new ApiFailure(401);
+    });
+    const abort = new AbortController();
+    const first = c.withAccess(abort.signal, request);
+    const second =
+      outcome === "concurrent"
+        ? c.withAccess(abort.signal, request)
+        : Promise.resolve();
+    now += 300_000;
+    if (outcome === "abort") abort.abort();
+    if (outcome === "logout") await c.logout();
+    if (outcome === "switch") {
+      await c.signIn();
+      await c.callback("new");
+    }
+    if (outcome === "dispose") c.dispose();
+    release.resolve();
+    await Promise.all([first, second]);
+    expect(request).toHaveBeenCalledTimes(outcome === "concurrent" ? 2 : 1);
+    expect(o.signIn).toHaveBeenCalledTimes(
+      ["concurrent", "switch"].includes(outcome) ? 1 : 0,
+    );
+    if (outcome === "concurrent")
+      expect(o.signIn).toHaveBeenCalledWith(true, { sameSessionOnly: true });
+    expect(localStorage.getItem("sage.auth.recovery-blocked")).toBe(
+      outcome === "logout" ? "true" : null,
+    );
+    if (outcome === "switch") expect(c.state.phase).toBe("ready");
+  },
+);

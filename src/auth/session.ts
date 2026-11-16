@@ -169,7 +169,10 @@ export function createSessionController({
     try {
       const session = await api.session(auth.accessToken);
       if (current !== epoch) return;
-      if (session.user.id !== auth.subject) throw new ApiFailure(401);
+      if (session.user.id !== auth.subject) {
+        fail(new ApiFailure(401), false);
+        return;
+      }
       if (auth.expiresAt <= now() + 5_000) {
         await expired(allowRecovery);
         return;
@@ -184,11 +187,23 @@ export function createSessionController({
         state.members = members;
         state.phase = "ready";
       } catch (error) {
-        if (current === epoch) fail(error, true);
+        if (current !== epoch) return;
+        if (expiredUnauthorized(error, auth)) await expired(allowRecovery);
+        else fail(error, true);
       }
     } catch (error) {
-      if (current === epoch) fail(error, false);
+      if (current !== epoch) return;
+      if (expiredUnauthorized(error, auth)) await expired(allowRecovery);
+      else fail(error, false);
     }
+  }
+  function expiredUnauthorized(error: unknown, auth: Credentials) {
+    // The dispatch margin is not evidence that an in-flight 401 is expiry.
+    return (
+      error instanceof ApiFailure &&
+      error.status === 401 &&
+      now() >= auth.expiresAt
+    );
   }
   async function expired(allowRecovery: boolean) {
     if (allowRecovery) await signIn(true, { sameSessionOnly: true });
@@ -243,6 +258,10 @@ export function createSessionController({
       if (isCurrent()) return result;
     } catch (error) {
       if (!isCurrent()) return;
+      if (expiredUnauthorized(error, auth)) {
+        await expired(true);
+        return; // The already sent request may have committed. Never replay it.
+      }
       if (
         error instanceof ApiFailure &&
         (error.status === 401 || (invalidateForbidden && error.status === 403))

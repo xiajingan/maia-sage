@@ -172,11 +172,7 @@ export function createNameContextController({
     );
   }
   async function run(
-    work: (
-      token: string,
-      signal: AbortSignal,
-      selected: NameSelection,
-    ) => Promise<void>,
+    work: (signal: AbortSignal, selected: NameSelection) => Promise<void>,
     onFailure?: (error: unknown) => void,
   ) {
     if (!valid() || !selection || state.busy) return;
@@ -185,9 +181,7 @@ export function createNameContextController({
       selected = selection;
     state.busy = true;
     try {
-      await session.withAccess(signal, async (token) => {
-        await work(token, signal, selected);
-      });
+      await work(signal, selected);
     } catch (error) {
       if (generation !== epoch || signal.aborted) return;
       state.config = undefined;
@@ -238,23 +232,29 @@ export function createNameContextController({
     if (!op || state.blocked) return;
     let claimConfirmed = false;
     await run(
-      async (token, signal, selected) => {
-        let value = await api.getNameContext(
-          token,
-          { path: { id: selected.instanceId, operationId: op.operationId } },
-          signal,
-        );
-        if (!accept(value, signal)) return;
-        if (value.nextAction === "complete") {
-          value = await api.completeNameContext(
+      async (signal, selected) => {
+        let value = await session.withAccess(signal, (token) =>
+          api.getNameContext(
             token,
-            {
-              path: { id: selected.instanceId, operationId: op.operationId },
-              body: { rowVersion: value.rowVersion },
-            },
+            { path: { id: selected.instanceId, operationId: op.operationId } },
             signal,
+          ),
+        );
+        if (!value || !accept(value, signal)) return;
+        if (value.nextAction === "complete") {
+          const rowVersion = value.rowVersion;
+          const completed = await session.withAccess(signal, (token) =>
+            api.completeNameContext(
+              token,
+              {
+                path: { id: selected.instanceId, operationId: op.operationId },
+                body: { rowVersion },
+              },
+              signal,
+            ),
           );
-          if (!accept(value, signal)) return;
+          if (!completed || !accept(completed, signal)) return;
+          value = completed;
         }
         claimConfirmed = true;
         if (
@@ -262,20 +262,22 @@ export function createNameContextController({
           value.expiresAt <= Date.now()
         )
           return;
-        const config = await api.getNameComponentConfig(
-          token,
-          {
-            path: { id: selected.instanceId },
-            body: {
-              operationId: value.operationId,
-              pageKey: "instance_contacts",
-              limit: 20,
-              ...(selected.cursor ? { cursor: selected.cursor } : {}),
+        const config = await session.withAccess(signal, (token) =>
+          api.getNameComponentConfig(
+            token,
+            {
+              path: { id: selected.instanceId },
+              body: {
+                operationId: op.operationId,
+                pageKey: "instance_contacts",
+                limit: 20,
+                ...(selected.cursor ? { cursor: selected.cursor } : {}),
+              },
             },
-          },
-          signal,
+            signal,
+          ),
         );
-        if (signal.aborted || !valid()) return;
+        if (!config || signal.aborted || !valid()) return;
         if (
           config.operationId !== value.operationId ||
           config.instanceId !== selected.instanceId ||
@@ -307,20 +309,22 @@ export function createNameContextController({
     // Open synchronously in the user's click; network awaits must not consume popup permission.
     if (environment === "web") popup = window.open("about:blank", "_blank");
     requestId ??= crypto.randomUUID();
-    await run(async (token, signal, selected) => {
-      const value = await api.createNameContext(
-        token,
-        {
-          path: { id: selected.instanceId },
-          body: {
-            clientRequestId: requestId!,
-            pageKey: "instance_contacts",
-            environment,
+    await run(async (signal, selected) => {
+      const value = await session.withAccess(signal, (token) =>
+        api.createNameContext(
+          token,
+          {
+            path: { id: selected.instanceId },
+            body: {
+              clientRequestId: requestId!,
+              pageKey: "instance_contacts",
+              environment,
+            },
           },
-        },
-        signal,
+          signal,
+        ),
       );
-      accept(value, signal);
+      if (value) accept(value, signal);
     });
     if (generation !== epoch) return;
     if (state.operation?.nextAction === "authorize") openAuthorization(false);

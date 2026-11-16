@@ -6,6 +6,7 @@ import {
   handleNameResult,
   prepareNameNavigation,
 } from "../src/features/contacts/name-context";
+import { createSessionController } from "../src/auth/session";
 import type { CreateNameContextResponse } from "maia-mud-client";
 const operation: CreateNameContextResponse = {
   operationId: "50",
@@ -569,3 +570,117 @@ test("恢复开始后姓名旧查询迟到不能接受新版本或继续完成�
   h.session.dispose();
   c.dispose();
 });
+
+// TC-SAGE-001 TC-SAGE-004 — real session + name controller + generated API.
+test.each([
+  ["query", 0],
+  ["query", 4_000],
+  ["complete", 0],
+  ["complete", 4_000],
+  ["complete401", 0],
+] as const)(
+  "%s响应跨到剩余%s毫秒时下一步零发送，恢复后只核对原操作",
+  async (boundary, remaining) => {
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.stubGlobal("localStorage", memoryStorage());
+    vi.stubGlobal("sessionStorage", memoryStorage());
+    const path = "/workspaces/1/channel-app-instances/20/contacts";
+    vi.stubGlobal("location", { origin: "https://localhost" });
+    vi.stubGlobal(
+      "window",
+      Object.assign(new EventTarget(), {
+        location: {
+          origin: "https://localhost",
+          href: "https://localhost" + path,
+          pathname: path,
+        },
+        open: () => null,
+      }),
+    );
+    const activeOperation = { ...operation, expiresAt: now + 594_000 };
+    let recovered = false;
+    const h = await harness((request) => {
+      if (request.method === "GET") {
+        if (!recovered && boundary === "query") now += 6_000 - remaining;
+        return Response.json({
+          ...activeOperation,
+          rowVersion: recovered ? "4" : "2",
+          nextAction: recovered ? "wait" : "complete",
+        });
+      }
+      if (request.url.endsWith("/complete")) {
+        now += 6_000 - remaining;
+        if (boundary === "complete401")
+          return Response.json(
+            {
+              code: "UNAUTHORIZED",
+              message: "synthetic",
+              requestId: "safe-request",
+            },
+            { status: 401 },
+          );
+        return Response.json({
+          ...activeOperation,
+          rowVersion: "3",
+          phase: "completed",
+          nextAction: "use_component",
+        });
+      }
+      return Response.json(activeOperation);
+    });
+    const signIn = vi.fn(async () => {});
+    const session = createSessionController({
+      api: h.api,
+      now: () => now,
+      oidc: {
+        signIn,
+        clear: () => {},
+        callback: async () => ({
+          subject: "2",
+          expiresAt: now + 300_000,
+          accessToken: "synthetic-access",
+          idToken: "synthetic-id",
+        }),
+      },
+    });
+    await session.callback("initial");
+    const c = createNameContextController({ api: h.api, session });
+    try {
+      c.select({ workspaceId: "1", instanceId: "20", scopeVersion: "1" });
+      now += 294_000;
+      await c.start("web");
+      await c.query();
+      expect(signIn).toHaveBeenCalledExactlyOnceWith(true, {
+        sameSessionOnly: true,
+      });
+      expect(
+        h.requests.filter((r) => r.url.endsWith("/complete")),
+      ).toHaveLength(boundary === "query" ? 0 : 1);
+      expect(h.requests.some((r) => r.url.includes("component-config"))).toBe(
+        false,
+      );
+      expect(c.state.operation?.operationId).toBe("50");
+      expect(c.state.operation?.rowVersion).toBe(
+        boundary === "complete" ? "3" : "2",
+      );
+      const saved = readNameReturn()!;
+      expect(saved.operationId).toBe("50");
+      expect(localStorage.getItem("sage.auth.recovery-blocked")).toBeNull();
+      recovered = true;
+      await session.callback("restored");
+      c.select({ workspaceId: "1", instanceId: "20", scopeVersion: "1" });
+      await c.resume(saved);
+      expect(c.state.operation?.rowVersion).toBe("4");
+      expect(h.requests.filter((r) => r.method === "GET")).toHaveLength(2);
+      expect(h.requests.filter((r) => r.method === "POST")).toHaveLength(
+        boundary === "query" ? 1 : 2,
+      );
+      expect(signIn).toHaveBeenCalledTimes(1);
+    } finally {
+      c.dispose();
+      session.dispose();
+      h.session.dispose();
+    }
+  },
+);

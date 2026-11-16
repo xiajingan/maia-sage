@@ -15,7 +15,7 @@
 
 登录入口显式 `prompt:login`；普通启动、刷新、重新打开及姓名页面往返均调用既有 `signIn(true, {sameSessionOnly:true})`，只尝试一次顶层 `prompt:none` 恢复，仍使用授权码 + S256 PKCE。没有原 issuer 会话时显示登录入口，callback 分支不会再次进入启动恢复。OIDC 发现/换码请求使用库的10秒超时，不无限等待或重放code。实际 sid 是否仍为原操作会话由 Mud 每次查询/完成核对，Sage 不自报 sid。使用scope=openid、随机nonce/state、`sid` essential claim、loadUserInfo:false，无refresh token、认证iframe或silent renew。oidc-client-ts校验原state和nonce；jose通过发现的同源JWKS实际验证RS256签名、iss/aud/exp/sub/sid和原nonce，业务session.user.id必须与已验证sub一致。回调URL捕获后立即replaceState去掉code/query，不记录原URL；换码结果未知不重放code。
 
-access/ID token及 `Credentials.expiresAt` 仅在controller闭包内存。`expiresAt` 为实际 token 响应经 OidcClient 换算的 Unix 毫秒，必须为有效安全整数且在当前时间5秒之后；缺失、非法或回调期间已过期的凭据直接停止，不触发回调→授权循环。正常已登录请求在剩余5秒内或到期后，先协调一次现有顶层恢复，原业务 callback 不发送；`location.assign` 返回也不会继续执行原动作。未过期401、资源403/404、网络/DB错误不通过重认证掩盖。已发送请求不通用重发，安装的未知结果仍沿原clientRequestId、operationId与rowVersion核对。24小时绝对边界由Mud执行，Sage不延长短token或自行判断sid等价。
+access/ID token及 `Credentials.expiresAt` 仅在controller闭包内存。`expiresAt` 为实际 token 响应经 OidcClient 换算的 Unix 毫秒，必须为有效安全整数且在当前时间5秒之后；缺失、非法或回调期间已过期的凭据直接停止，不触发回调→授权循环。正常已登录请求在剩余5秒内或到期后，先协调一次现有顶层恢复，原业务 callback 不发送；`location.assign` 返回也不会继续执行原动作。每次实际 HTTP dispatch（包括姓名查询后的 complete/config）都重新检查到期、epoch 与 signal。当前未取消请求返回401时，只有该次真实 expiresAt 已到才协调一次恢复并结束旧调用；未过期401（包括剩余1～5秒）、资源403/404、网络/DB错误不通过重认证掩盖。session/members 的正常读取沿同一规则，callback读取始终停止而不循环授权。已发送请求不通用重发，安装的未知结果仍沿原clientRequestId、operationId与rowVersion核对。24小时绝对边界由Mud执行，Sage不延长短token或自行判断sid等价。
 
 短期state/verifier/nonce只在当前标签页 `sage.oidc.` 前缀sessionStorage，600秒过期，回调成功/失败删除原操作；清理不碰其他前缀。离页立即丢弃内存会话与退出操作，但保留短期PKCE，以支持导航到认证页后返回。再次主动登录先清旧协议状态。OidcClient没有UserStore或令牌缓存，代次过期的底层完成结果不能恢复身份，也不能清除新授权的协议状态。
 
@@ -25,7 +25,7 @@ access/ID token及 `Credentials.expiresAt` 仅在controller闭包内存。`expir
 
 origin级localStorage只额外保存固定布尔意图 `sage.auth.recovery-blocked=true`，不含账号、sid、令牌或路径，不是认证/权限事实。主动退出在撤销发送前置位，整体失权/失败恢复同样置位，避免注销未知后刷新/新标签页复活；资源级拒绝不置位。显式密码登录清除意图；正常到期不置位。storage不可用时停止自动恢复，但不阻止显式登录或实际撤销。迟到失败必须先通过epoch校验，不得重新污染新登录已清除的标记；跨标签标记不会自动删除其他页面的内存会话。
 
-查询、回调、登录失败、退出结果均比较epoch后再写页面。已持有凭据的正常、加载、降级及读取错误状态通过canLogout明确保留退出操作；只有清除本机凭据后隐藏退出。会话/成员读取的401清空资料并引导登录，403/404清空资料并显示无权；企微资源级拒绝的隔离行为见[企微接入](wecom-onboarding.md#联系人同步与清理)；503/网络/非法响应显示安全错误和可重试；session/member读取沿已有API传输期限在10秒后取消，超时归读取错误而非401；仅成员失败保留已验证空间资料并显式降级，缺数据不显示零成员。关联编号只显示owner错误Schema中的requestId，不呈现异常全文或内部code。
+查询、回调、登录失败、退出结果均比较epoch后再写页面。已持有凭据的正常、加载、降级及读取错误状态通过canLogout明确保留退出操作；只有清除本机凭据后隐藏退出。会话/成员读取的未到期401清空资料并引导登录，403/404清空资料并显示无权；企微资源级拒绝的隔离行为见[企微接入](wecom-onboarding.md#联系人同步与清理)；503/网络/非法响应显示安全错误和可重试；session/member读取沿已有API传输期限在10秒后取消，超时归读取错误而非401；仅成员失败保留已验证空间资料并显式降级，缺数据不显示零成员。关联编号只显示owner错误Schema中的requestId，不呈现异常全文或内部code。
 
 退出也清理非秘密姓名恢复引用；退出立即清access和私有资料，原ID token仅保留在当前内存退出操作，与随机requestId固定。未知结果显示“本机已退出，会话撤销待核实”，600秒内只重试原输入。退出请求10秒超时并传递AbortSignal，中断网络后进入待核实；controller本身以有界race覆盖不响应abort的传输。中断不能证明服务端未执行，因此保留原hint/requestId，不新建撤销操作。pending页可重新登录，主动登录/回调/离页会中断原请求，旧结果通过epoch丢弃。新登录、回调或离页丢弃原操作；晚到结果不能影响新会话。端点cookie行为由Mud负责。
 
