@@ -21,7 +21,7 @@ access/ID token及 `Credentials.expiresAt` 仅在controller闭包内存。`expir
 
 认证返回路径只允许 `/`、`/terminals`、`/workspaces/{id}/wecom`、安装操作稳定页与实例联系人页，ID经生成Schema校验；拒绝外源、query、hash与任意路径。路径在首次异步等待及同步session watcher改变路由前捕获，随本次 OIDC state.data 保存并消费；不保存敏感表单或终端激活码。企微严格路径与时序边界见[企微接入恢复](wecom-onboarding.md#接入与原操作恢复)。callback 仅在当前 epoch 且工作空间读取成功后返回可选导航路径，主入口再次校验后导航。
 
-每次登录/回调/退出/失权推进epoch。正常恢复开始时phase为authenticating，load/withAccess禁止新业务；原只读session/members暂留至pagehide，以让既有姓名导航准备保留非秘密原操作。姓名controller同时同步suspend，令已在途query/complete/config链的epoch与signal失效，不能拿闭包中的旧token继续下一项动作。pagehide仍按prepareNameNavigation→dispose清内存；恢复失败、显式换账号及退出立即清资料/原引用。
+每次登录/回调/退出/失权推进epoch。正常恢复开始时phase为authenticating，load/withAccess禁止新业务；原只读session/members暂留至pagehide，以让既有姓名导航准备保留非秘密原操作或 pending-create 的原幂等 key。姓名controller同时同步suspend，令已在途query/complete/config链的epoch与signal失效，不能拿闭包中的旧token继续下一项动作。pagehide仍按prepareNameNavigation→dispose清内存；恢复失败、显式换账号及退出立即清资料/原引用。
 
 origin级localStorage只额外保存固定布尔意图 `sage.auth.recovery-blocked=true`，不含账号、sid、令牌或路径，不是认证/权限事实。主动退出在撤销发送前置位，整体失权/失败恢复同样置位，避免注销未知后刷新/新标签页复活；资源级拒绝不置位。显式密码登录清除意图；正常到期不置位。storage不可用时停止自动恢复，但不阻止显式登录或实际撤销。迟到失败必须先通过epoch校验，不得重新污染新登录已清除的标记；跨标签标记不会自动删除其他页面的内存会话。
 

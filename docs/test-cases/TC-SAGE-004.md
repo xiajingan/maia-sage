@@ -23,8 +23,9 @@ story: US-006
 2. 阻止弹窗、返回错误企业或缺登录授权配置：分别显示显式打开入口、核对企业/新上下文入口或配置提示；不循环授权、不切换实例、不改变同步成功。关闭过授权窗口后，显式打开会复用原操作并跟踪新窗口；旧窗口通知被拒绝，新窗口仍须通过origin和原operationId核对。
 3. 企微整页返回：仅受控联系人路径和原操作可恢复，OIDC显式prompt=none和S256 PKCE。无原issuer会话或原操作被sid/权限拒绝时，要求先Maia登录再新建上下文，不能用企微code登录Maia。
 4. 加载官方组件：企微先config再agentConfig；Web跳过config。checkSession成功后才创建官方元素，并在挂载后bind。ready/update/bound只表示阶段，不能宣称真人显示成功。
-5. 短token恢复阶段保留只读资料与既有原操作引用至pagehide，同时暂停姓名查询链；迟到查询不得更新版本或继续complete/config。以真实session与姓名controller、生成API组合并控制时间，GET或complete成功应答时跨到期/进入5秒提前窗，随后complete/config零发送、只恢复一次，保留原操作及已接受rowVersion。已发complete返回到期401同样不重发、保留旧引用供核对；恢复后查询原操作，不自动再次提交旧rowVersion。pagehide沿导航准备保留原引用，退出/换账号/恢复失败立即清理。超时、错误、过期、URL或范围变化、退出/切实例：组件卸载，监听与旧请求隔离；晚ready/error/update不能复活旧元素。全局初始化中断后必须刷新再核对，不继续初始化新范围。
-6. 重试原姓名授权：先重查当前上下文/范围再取同页20条配置，Vue元素可重新挂载；容量受限显示安全恢复指导，原Maia会话与联系人同步摘要保留。
+5. 短token恢复阶段保留只读资料与既有原操作引用至pagehide，同时暂停姓名查询链；迟到查询不得更新版本或继续complete/config。以真实session与姓名controller、生成API组合并控制时间，GET或complete成功应答时跨到期/进入5秒提前窗，随后complete/config零发送、只恢复一次，保留原操作及已接受rowVersion。已发complete返回到期401同样不重发、保留旧引用供核对；恢复原操作的GET在途到期401也不能提前消费唯一已知引用；恢复后查询原操作，不自动再次提交旧rowVersion。pagehide沿导航准备保留原引用，退出/换账号/恢复失败立即清理。超时、错误、过期、URL或范围变化、退出/切实例：组件卸载，监听与旧请求隔离；晚ready/error/update不能复活旧元素。全局初始化中断后必须刷新再核对，不继续初始化新范围。
+6. 姓名 create 先发生网络/503未知结果，再核对原key时跨到期401或在dispatch前恢复：真实session/namecontroller组合模拟pagehide与新controller，恢复零POST，显式核对才复用原key/environment；首次POST前存储失败零发送。pending绑定实际userId及稳定选择，固定五分钟UI期限不滚动。损坏/到期/账号/实例/范围不匹配保留并阻断；显式放弃只清本地无HTTP，再新建需另一次点击。退出/换账号清理；原始sid/token不得持久化。真实Chrome main/Vue合成场景验证pending按钮、认证导航及同key核对。
+7. 重试原姓名授权：先重查当前上下文/范围再取同页20条配置，Vue元素可重新挂载；容量受限显示安全恢复指导，原Maia会话与联系人同步摘要保留。
 7. 在桌面/移动布局以及独立浏览器中查看：无整页横向溢出、未知/空/受限有下一步；第二浏览器不能凭operationId取得原Bearer或原窗口source。
 
 ## 测试代码

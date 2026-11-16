@@ -69,6 +69,7 @@ try {
     claims = 0,
     exchanges = 0;
   const errors = [];
+  const pendingPosts = [];
   await context.route("**/*", async (route) => {
     const request = route.request(),
       url = new URL(request.url());
@@ -149,7 +150,8 @@ try {
           access_token: "synthetic-bearer",
           id_token: id,
           token_type: "Bearer",
-          expires_in: 300,
+          expires_in:
+            mode === "pending-create" && pendingPosts.length === 0 ? 6 : 300,
         },
       });
     }
@@ -190,6 +192,34 @@ try {
           scopeVersion: "1",
         },
       });
+    if (
+      path.endsWith("/name-context-operations") &&
+      mode === "pending-create"
+    ) {
+      pendingPosts.push(request.postDataJSON());
+      if (pendingPosts.length === 1)
+        return route.fulfill({
+          status: 503,
+          json: {
+            code: "RESULT_UNKNOWN",
+            message: "合成未知结果",
+            requestId: "synthetic",
+          },
+        });
+      return route.fulfill({
+        json: {
+          operationId: "50",
+          instanceId: "20",
+          rowVersion: "1",
+          phase: "awaiting_verification",
+          safeReason: null,
+          nextAction: "wait",
+          authorizationUrl: null,
+          environment: "web",
+          expiresAt: Date.now() + 240000,
+        },
+      });
+    }
     if (path.endsWith("/name-context-operations/50")) {
       claims++;
       if (mode === "sid-rejected")
@@ -361,13 +391,46 @@ try {
     ),
     0,
   );
+  // Real Vue/main/pagehide and a new controller; only metadata/error responses are synthetic.
+  mode = "pending-create";
+  await page.evaluate(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+  await page.goto(origin + contactPath);
+  await finish();
+  await page.getByRole("button", { name: "授权姓名展示", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "核对原姓名发起请求", exact: true }),
+  ).toBeEnabled();
+  assert.equal(pendingPosts.length, 1);
+  await page.waitForTimeout(1200);
+  await page
+    .getByRole("button", { name: "核对原姓名发起请求", exact: true })
+    .click();
+  await finish();
+  await expect(
+    page.getByRole("button", { name: "核对原姓名发起请求", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "放弃本次姓名核验", exact: true }),
+  ).toBeVisible();
+  assert.equal(pendingPosts.length, 1);
+  await page
+    .getByRole("button", { name: "核对原姓名发起请求", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "核对原姓名授权", exact: true }),
+  ).toBeVisible();
+  assert.equal(pendingPosts.length, 2);
+  assert.deepEqual(pendingPosts[1], pendingPosts[0]);
   assert.deepEqual(errors, []);
   console.log(
     JSON.stringify({
       result: "passed",
       syntheticOnly: true,
       cases:
-        "real main/PKCE/prompt=none/JWS/original-operation/member SDK sequence/reload/sid denial/login_required/state consumed",
+        "real main/PKCE/prompt=none/JWS/original-operation/member SDK sequence/reload/sid denial/login_required/state consumed/pending unknown navigation no replay explicit same-key query",
     }),
   );
 } finally {

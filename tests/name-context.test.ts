@@ -1,4 +1,4 @@
-import { afterEach, expect, test, vi } from "vitest";
+import { beforeEach, afterEach, expect, test, vi } from "vitest";
 import { harness, memoryStorage } from "./fixtures/wecom";
 import {
   createNameContextController,
@@ -8,6 +8,16 @@ import {
 } from "../src/features/contacts/name-context";
 import { createSessionController } from "../src/auth/session";
 import type { CreateNameContextResponse } from "maia-mud-client";
+const pageLocation = {
+  origin: "https://localhost",
+  href: "https://localhost/workspaces/1/channel-app-instances/20/contacts",
+  pathname: "/workspaces/1/channel-app-instances/20/contacts",
+};
+beforeEach(() => {
+  vi.stubGlobal("sessionStorage", memoryStorage());
+  vi.stubGlobal("localStorage", memoryStorage());
+  vi.stubGlobal("location", pageLocation);
+});
 const operation: CreateNameContextResponse = {
   operationId: "50",
   instanceId: "20",
@@ -90,7 +100,7 @@ test("component_expired_or_wrong_corp 拒绝状态不改同步或实例，不循
   );
   const popup = { close: vi.fn(), location: { replace: vi.fn() } };
   vi.stubGlobal("window", {
-    location: { origin: "https://localhost" },
+    location: pageLocation,
     open: vi.fn(() => popup),
   });
   const c = createNameContextController(h);
@@ -159,7 +169,7 @@ test("退出与迟到姓名响应不恢复旧上下文", async () => {
       }),
   );
   vi.stubGlobal("window", {
-    location: { origin: "https://localhost" },
+    location: pageLocation,
     open: () => null,
   });
   const c = createNameContextController(h);
@@ -183,7 +193,7 @@ test("同根重新登录后迟到响应不恢复旧操作", async () => {
       }),
   );
   vi.stubGlobal("window", {
-    location: { origin: "https://localhost" },
+    location: pageLocation,
     open: () => null,
   });
   const c = createNameContextController(h);
@@ -220,6 +230,7 @@ test("姓名配置跟随当前页cursor/20条；容量拒绝保留会话和安�
     location: {
       origin: "https://localhost",
       href: "https://localhost/workspaces/1/channel-app-instances/20/contacts",
+      pathname: "/workspaces/1/channel-app-instances/20/contacts",
     },
     open: () => null,
   });
@@ -291,6 +302,7 @@ test("较新范围清除旧恢复引用，避免再次领取旧范围操作", as
     location: {
       origin: "https://localhost",
       href: "https://localhost/workspaces/1/channel-app-instances/20/contacts",
+      pathname: "/workspaces/1/channel-app-instances/20/contacts",
     },
     open: () => null,
   });
@@ -353,6 +365,7 @@ test("显式离页保留非秘密原操作，正常会话切换和卸载仍清�
       location: {
         origin: "https://localhost",
         href: "https://localhost/workspaces/1/channel-app-instances/20/contacts",
+        pathname: "/workspaces/1/channel-app-instances/20/contacts",
       },
       open: () => null,
     }),
@@ -387,7 +400,7 @@ test("显式离页保留非秘密原操作，正常会话切换和卸载仍清�
 test("弹窗被阻止只尝试一次，显式打开复用原操作", async () => {
   const h = await harness(() => Response.json(operation));
   const open = vi.fn(() => null);
-  vi.stubGlobal("window", { location: { origin: "https://localhost" }, open });
+  vi.stubGlobal("window", { location: pageLocation, open });
   const c = createNameContextController(h);
   c.select({ workspaceId: "1", instanceId: "20", scopeVersion: "1" });
   await c.start("web");
@@ -426,7 +439,7 @@ test.each([false, true])(
     if (blocked) open.mockReturnValueOnce(null);
     open.mockReturnValueOnce(newPopup);
     vi.stubGlobal("window", {
-      location: { origin: "https://localhost" },
+      location: pageLocation,
       open,
     });
     const c = createNameContextController(h);
@@ -499,6 +512,7 @@ test.each(["pagehide", "logout", "switch"])(
         location: {
           origin: "https://localhost",
           href: "https://localhost/workspaces/1/channel-app-instances/20/contacts",
+          pathname: "/workspaces/1/channel-app-instances/20/contacts",
         },
         open: () => null,
       }),
@@ -548,6 +562,7 @@ test("恢复开始后姓名旧查询迟到不能接受新版本或继续完成�
       location: {
         origin: "https://localhost",
         href: "https://localhost/workspaces/1/channel-app-instances/20/contacts",
+        pathname: "/workspaces/1/channel-app-instances/20/contacts",
       },
       open: () => null,
     }),
@@ -665,7 +680,7 @@ test.each([
         boundary === "complete" ? "3" : "2",
       );
       const saved = readNameReturn()!;
-      expect(saved.operationId).toBe("50");
+      expect(saved).toMatchObject({ operationId: "50" });
       expect(localStorage.getItem("sage.auth.recovery-blocked")).toBeNull();
       recovered = true;
       await session.callback("restored");
@@ -684,3 +699,232 @@ test.each([
     }
   },
 );
+
+// TC-SAGE-004 — unknown create survives authentication without another POST.
+test.each([
+  ["inflight401", "network"],
+  ["before-dispatch", "network"],
+  ["inflight401", "503"],
+  ["before-dispatch", "503"],
+])(
+  "未知姓名create在%s恢复离页后保留原key，只有显式核对可发送（%s）",
+  async (boundary, failure) => {
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.stubGlobal("localStorage", memoryStorage());
+    vi.stubGlobal("sessionStorage", memoryStorage());
+    const path = "/workspaces/1/channel-app-instances/20/contacts";
+    vi.stubGlobal("location", { origin: "https://localhost" });
+    vi.stubGlobal(
+      "window",
+      Object.assign(new EventTarget(), {
+        location: {
+          origin: "https://localhost",
+          href: "https://localhost" + path,
+          pathname: path,
+        },
+        open: () => null,
+      }),
+    );
+    let attempt = 0;
+    const h = await harness(() => {
+      attempt++;
+      if (attempt === 1) {
+        if (failure === "503") return Response.json({}, { status: 503 });
+        throw new Error("network-unknown");
+      }
+      if (boundary === "inflight401" && attempt === 2) {
+        now += 6_000;
+        return Response.json({}, { status: 401 });
+      }
+      return Response.json({
+        ...operation,
+        environment: "member",
+        expiresAt: now + 240_000,
+        nextAction: "wait",
+        authorizationUrl: null,
+      });
+    });
+    const signIn = vi.fn(async () => {});
+    const newSession = async () => {
+      const session = createSessionController({
+        api: h.api,
+        now: () => now,
+        oidc: {
+          signIn,
+          clear: () => {},
+          callback: async () => ({
+            subject: "2",
+            expiresAt: now + 300_000,
+            accessToken: "synthetic-access",
+            idToken: "synthetic-id",
+          }),
+        },
+      });
+      await session.callback("callback");
+      return session;
+    };
+    const session = await newSession();
+    const c = createNameContextController({ api: h.api, session });
+    c.select({ workspaceId: "1", instanceId: "20", scopeVersion: "1" });
+    now += 294_000;
+    await c.start("member");
+    const original = await h.requests[0]!.clone().json();
+    expect(readNameReturn()).toMatchObject({
+      kind: "pending-create",
+      clientRequestId: original.clientRequestId,
+      userId: "2",
+      environment: "member",
+    });
+    const initialDeadline = readNameReturn()!.expiresAt;
+    if (boundary === "before-dispatch") now += 6_000;
+    await c.start("web");
+    expect(signIn).toHaveBeenCalledTimes(1);
+    const sent = h.requests.length;
+    prepareNameNavigation();
+    session.dispose();
+    c.dispose();
+    const restoredSession = await newSession();
+    const restored = createNameContextController({
+      api: h.api,
+      session: restoredSession,
+    });
+    try {
+      const saved = readNameReturn()!;
+      expect(saved.expiresAt).toBe(initialDeadline);
+      restored.select({
+        workspaceId: "1",
+        instanceId: "20",
+        scopeVersion: "1",
+      });
+      await restored.resume(saved);
+      expect(h.requests).toHaveLength(sent);
+      await restored.start("web");
+      expect(h.requests).toHaveLength(sent + 1);
+      for (const request of h.requests)
+        expect(await request.json()).toEqual(original);
+      expect(restored.state.operation?.operationId).toBe("50");
+      expect(readNameReturn()).toMatchObject({ operationId: "50" });
+    } finally {
+      restored.dispose();
+      restoredSession.dispose();
+      h.session.dispose();
+    }
+  },
+);
+
+// TC-SAGE-004 — pending references never grant access or silently create a new key.
+test.each(["expired", "damaged", "user", "instance", "scope"])(
+  "pending-create的%s引用阻止发送并保留，显式放弃只清本地",
+  async (condition) => {
+    vi.stubGlobal(
+      "window",
+      Object.assign(new EventTarget(), {
+        location: pageLocation,
+        open: () => null,
+      }),
+    );
+    const h = await harness(() => Response.json({}, { status: 503 }));
+    const c = createNameContextController(h);
+    const selected = { workspaceId: "1", instanceId: "20", scopeVersion: "1" };
+    c.select(selected);
+    await c.start("web");
+    const saved = JSON.parse(sessionStorage.getItem("sage.wecom.name-return")!);
+    if (condition === "expired") saved.expiresAt = Date.now() - 1;
+    if (condition === "user") saved.userId = "3";
+    if (condition === "instance") {
+      saved.instanceId = "21";
+      saved.returnPath = "/workspaces/1/channel-app-instances/21/contacts";
+    }
+    if (condition === "scope") saved.scopeVersion = "2";
+    const raw = condition === "damaged" ? "{broken" : JSON.stringify(saved);
+    sessionStorage.setItem("sage.wecom.name-return", raw);
+    c.select(selected);
+    await c.start("web");
+    expect(c.state.pendingCreate).toBe(true);
+    expect(c.state.blocked).toBe(true);
+    expect(c.state.requiresLogin).toBe(false);
+    expect(h.requests).toHaveLength(1);
+    expect(sessionStorage.getItem("sage.wecom.name-return")).toBe(raw);
+    c.recreate(); // The known-operation action cannot bypass a pending reference.
+    expect(sessionStorage.getItem("sage.wecom.name-return")).toBe(raw);
+    c.abandon();
+    expect(h.requests).toHaveLength(1);
+    expect(sessionStorage.getItem("sage.wecom.name-return")).toBeNull();
+    await c.start("web");
+    expect(h.requests).toHaveLength(2);
+    expect((await h.requests[1]!.json()).clientRequestId).not.toBe(
+      saved.clientRequestId,
+    );
+    c.abandon();
+    c.dispose();
+  },
+);
+
+test("pending-create持久化被拒绝时POST零发送", async () => {
+  vi.stubGlobal("window", { location: pageLocation, open: () => null });
+  const store = memoryStorage();
+  vi.stubGlobal("sessionStorage", {
+    ...store,
+    setItem: () => {
+      throw new Error("blocked");
+    },
+  });
+  const h = await harness(() => Response.json(operation));
+  const c = createNameContextController(h);
+  c.select({ workspaceId: "1", instanceId: "20", scopeVersion: "1" });
+  await c.start("web");
+  expect(h.requests).toHaveLength(0);
+  expect(c.state.blocked).toBe(true);
+  c.dispose();
+});
+
+test.each(["logout", "switch"])(
+  "pending-create在显式%s后清理且不再发送",
+  async (action) => {
+    vi.stubGlobal("window", { location: pageLocation, open: () => null });
+    const h = await harness(() => Response.json({}, { status: 503 }));
+    const c = createNameContextController(h);
+    c.select({ workspaceId: "1", instanceId: "20", scopeVersion: "1" });
+    await c.start("web");
+    expect(readNameReturn()).toMatchObject({ kind: "pending-create" });
+    if (action === "logout") await h.session.logout();
+    else await h.session.signIn();
+    expect(sessionStorage.getItem("sage.wecom.name-return")).toBeNull();
+    expect(h.requests).toHaveLength(action === "logout" ? 2 : 1);
+    c.dispose();
+  },
+);
+
+// TC-SAGE-004 — restoring an existing operation must not consume its only reference before a read.
+test("原操作恢复查询在途到期401仍保留已知引用", async () => {
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  vi.stubGlobal(
+    "window",
+    Object.assign(new EventTarget(), {
+      location: pageLocation,
+      open: () => null,
+    }),
+  );
+  const expiresAt = now + 594_000;
+  const h = await harness((request) => {
+    if (request.method === "GET") {
+      now += 6_000;
+      return Response.json({}, { status: 401 });
+    }
+    return Response.json({ ...operation, expiresAt });
+  });
+  const c = createNameContextController(h);
+  c.select({ workspaceId: "1", instanceId: "20", scopeVersion: "1" });
+  now += 294_000;
+  await c.start("web");
+  const saved = readNameReturn()!;
+  await c.resume(saved);
+  expect(h.session.state.phase).toBe("authenticating");
+  expect(readNameReturn()).toEqual(saved);
+  expect(h.requests).toHaveLength(2);
+  prepareNameNavigation();
+  h.session.dispose();
+  c.dispose();
+});

@@ -277,10 +277,17 @@ onBeforeUnmount(dispose);
       <div class="terminal-actions">
         <button
           v-if="!names.state.operation"
-          :disabled="names.state.busy"
+          :disabled="names.state.busy || names.state.blocked"
           @click="authorizeNames"
         >
-          授权姓名展示
+          {{ names.state.pendingCreate ? "核对原姓名发起请求" : "授权姓名展示" }}
+        </button>
+        <button
+          v-if="names.state.pendingCreate"
+          :disabled="names.state.busy"
+          @click="names.abandon()"
+        >
+          放弃本次姓名核验
         </button>
         <button
           v-if="names.state.operation?.nextAction === 'authorize'"
@@ -312,6 +319,7 @@ onBeforeUnmount(dispose);
         <button
           v-if="
             !names.state.requiresLogin &&
+              !names.state.pendingCreate &&
               (names.state.blocked ||
                 names.state.operation?.nextAction === 'recreate')
           "

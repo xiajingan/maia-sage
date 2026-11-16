@@ -23,12 +23,34 @@ const navigationEvent = "maia:preserve-name-navigation";
 export function prepareNameNavigation() {
   window.dispatchEvent(new Event(navigationEvent));
 }
-export type NameReturn = {
+type KnownNameReturn = {
   operationId: string;
   instanceId: string;
   returnPath: string;
   expiresAt: number;
 };
+type PendingNameReturn = {
+  kind: "pending-create";
+  clientRequestId: string;
+  environment: "member" | "web";
+  userId: string;
+  workspaceId: string;
+  instanceId: string;
+  scopeVersion: string;
+  returnPath: string;
+  expiresAt: number;
+};
+export type NameReturn = KnownNameReturn | PendingNameReturn;
+function storedNameReturn(): { value?: NameReturn; unresolved: boolean } {
+  try {
+    const raw = sessionStorage.getItem(returnKey);
+    if (raw === null) return { unresolved: false };
+    const value = readNameReturn();
+    return { value, unresolved: !value || "kind" in value };
+  } catch {
+    return { unresolved: true };
+  }
+}
 export function clearNameReturn() {
   try {
     sessionStorage.removeItem(returnKey);
@@ -41,25 +63,41 @@ export function readNameReturn(): NameReturn | undefined {
     const raw: unknown = JSON.parse(
       sessionStorage.getItem(returnKey) ?? "null",
     );
-    if (
-      !raw ||
-      typeof raw !== "object" ||
-      Object.keys(raw).sort().join() !==
-        "expiresAt,instanceId,operationId,returnPath"
-    )
-      return;
+    if (!raw || typeof raw !== "object") return;
     const value = raw as NameReturn;
+    const pending = "kind" in value;
+    const fields = pending
+      ? "clientRequestId,environment,expiresAt,instanceId,kind,returnPath,scopeVersion,userId,workspaceId"
+      : "expiresAt,instanceId,operationId,returnPath";
+    if (Object.keys(value).sort().join() !== fields) return;
     if (
-      !Check(NameContextViewSchema.properties.operationId, value.operationId) ||
       !Check(NameContextViewSchema.properties.instanceId, value.instanceId) ||
-      typeof value.expiresAt !== "number" ||
-      value.expiresAt <= Date.now() ||
+      !Number.isSafeInteger(value.expiresAt) ||
       value.expiresAt > Date.now() + 300000 ||
+      (!pending && value.expiresAt <= Date.now()) ||
       businessReturnPath(value.returnPath, location.origin) !==
         value.returnPath ||
       !value.returnPath.endsWith(
         `/channel-app-instances/${value.instanceId}/contacts`,
       )
+    )
+      return;
+    if (pending) {
+      if (
+        value.kind !== "pending-create" ||
+        !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+          value.clientRequestId,
+        ) ||
+        !["member", "web"].includes(value.environment) ||
+        ![value.userId, value.workspaceId, value.scopeVersion].every((id) =>
+          Check(NameContextViewSchema.properties.instanceId, id),
+        ) ||
+        value.returnPath !==
+          `/workspaces/${value.workspaceId}/channel-app-instances/${value.instanceId}/contacts`
+      )
+        return;
+    } else if (
+      !Check(NameContextViewSchema.properties.operationId, value.operationId)
     )
       return;
     return value;
@@ -78,7 +116,7 @@ export function handleNameResult(): NameReturn | undefined {
     return;
   }
   const saved = readNameReturn();
-  if (saved?.operationId === id) return saved;
+  if (saved && !("kind" in saved) && saved.operationId === id) return saved;
 }
 
 export function createNameContextController({
@@ -95,12 +133,14 @@ export function createNameContextController({
     message?: string;
     blocked: boolean;
     requiresLogin?: boolean;
+    pendingCreate?: boolean;
   }>({ busy: false, blocked: false });
   let selection: NameSelection | undefined;
   let abort = new AbortController();
   let epoch = 0;
   let popup: Window | null = null;
   let requestId: string | undefined;
+  let pendingCreate: PendingNameReturn | undefined;
   let leaving = false;
   const markLeaving = () => {
     leaving = true;
@@ -122,6 +162,8 @@ export function createNameContextController({
     state.blocked = false;
     state.requiresLogin = false;
     requestId = undefined;
+    pendingCreate = undefined;
+    state.pendingCreate = false;
   }
   function select(value?: NameSelection) {
     const retain =
@@ -130,15 +172,20 @@ export function createNameContextController({
       value.workspaceId === selection.workspaceId &&
       value.instanceId === selection.instanceId &&
       value.scopeVersion === selection.scopeVersion;
-    if (selection && !retain && !leaving) clearNameReturn();
+    if (selection && !retain && !leaving && !storedNameReturn().unresolved)
+      clearNameReturn();
     const op = retain ? state.operation : undefined;
     clear();
     selection = value;
     if (op) accept(op, abort.signal);
+    else if (value) restorePending();
   }
   const stopSession = watch(
     () => session.state.session,
-    () => select(undefined),
+    () => {
+      if (!session.state.session && !leaving) clearNameReturn();
+      select(undefined);
+    },
     { flush: "sync" },
   );
   const stopPhase = watch(
@@ -158,11 +205,36 @@ export function createNameContextController({
   function dispose() {
     stopSession();
     stopPhase();
-    if (!leaving) clearNameReturn();
+    if (!leaving && !storedNameReturn().unresolved) clearNameReturn();
     if (typeof window !== "undefined")
       window.removeEventListener?.(navigationEvent, markLeaving);
     clear();
     selection = undefined;
+  }
+  function restorePending() {
+    const saved = storedNameReturn();
+    if (!saved.unresolved) return;
+    state.pendingCreate = true;
+    const value = saved.value;
+    if (
+      !value ||
+      !("kind" in value) ||
+      !selection ||
+      value.userId !== session.state.session?.user.id ||
+      value.workspaceId !== selection.workspaceId ||
+      value.instanceId !== selection.instanceId ||
+      value.scopeVersion !== selection.scopeVersion ||
+      value.returnPath !== window.location.pathname ||
+      value.expiresAt <= Date.now()
+    ) {
+      state.blocked = true;
+      state.message =
+        "原姓名发起结果仍待核对，当前引用已过期、损坏或与账号/范围不符。可放弃本次姓名核验；这只清除本地引用，不撤销服务端历史。";
+      return;
+    }
+    pendingCreate = value;
+    requestId = value.clientRequestId;
+    state.message = "原姓名发起结果未知，请显式核对原请求；不会自动再次发送。";
   }
   function valid() {
     return (
@@ -209,6 +281,8 @@ export function createNameContextController({
     )
       return false;
     state.operation = op;
+    pendingCreate = undefined;
+    state.pendingCreate = false;
     saveReturn();
     state.message =
       op.safeReason === "login_configuration_unavailable"
@@ -305,13 +379,34 @@ export function createNameContextController({
   }
   async function start(environment: "member" | "web") {
     if (!valid() || state.busy || Boolean(state.operation)) return;
+    restorePending();
+    if (state.blocked) return;
+    environment = pendingCreate?.environment ?? environment;
     const generation = epoch;
     // Open synchronously in the user's click; network awaits must not consume popup permission.
     if (environment === "web") popup = window.open("about:blank", "_blank");
     requestId ??= crypto.randomUUID();
     await run(async (signal, selected) => {
-      const value = await session.withAccess(signal, (token) =>
-        api.createNameContext(
+      const value = await session.withAccess(signal, async (token) => {
+        pendingCreate ??= {
+          kind: "pending-create",
+          clientRequestId: requestId!,
+          environment,
+          userId: session.state.session!.user.id,
+          workspaceId: selected.workspaceId,
+          instanceId: selected.instanceId,
+          scopeVersion: selected.scopeVersion,
+          returnPath: window.location.pathname,
+          expiresAt: Date.now() + 300000,
+        };
+        state.pendingCreate = true;
+        if (!saveReturn()) {
+          state.blocked = true;
+          state.message =
+            "无法保存原姓名请求的核对引用，本次未发送。请允许会话存储后放弃本次姓名核验再发起。";
+          return;
+        }
+        return api.createNameContext(
           token,
           {
             path: { id: selected.instanceId },
@@ -322,8 +417,8 @@ export function createNameContextController({
             },
           },
           signal,
-        ),
-      );
+        );
+      });
       if (value) accept(value, signal);
     });
     if (generation !== epoch) return;
@@ -402,6 +497,10 @@ export function createNameContextController({
     await query();
   }
   async function resume(saved: NameReturn) {
+    if ("kind" in saved) {
+      restorePending();
+      return;
+    }
     if (
       !selection ||
       saved.instanceId !== selection.instanceId ||
@@ -420,13 +519,21 @@ export function createNameContextController({
       authorizationUrl: null,
       safeReason: null,
     };
-    clearNameReturn();
+    // Keep the original reference until an authenticated result replaces or rejects it.
     await query(true);
   }
   function saveReturn() {
     const op = state.operation;
-    if (!op || !selection || !valid() || typeof sessionStorage === "undefined")
-      return;
+    if (!selection || !valid() || typeof sessionStorage === "undefined") return;
+    if (!op && pendingCreate) {
+      try {
+        sessionStorage.setItem(returnKey, JSON.stringify(pendingCreate));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    if (!op) return;
     const returnPath = businessReturnPath(
       window.location.href,
       window.location.origin,
@@ -452,6 +559,10 @@ export function createNameContextController({
     }
   }
   function recreate() {
+    if (state.pendingCreate) return;
+    abandon();
+  }
+  function abandon() {
     const selected = selection;
     clear();
     selection = selected;
@@ -466,6 +577,7 @@ export function createNameContextController({
     openAuthorization,
     resume,
     recreate,
+    abandon,
     saveReturn,
     suspend,
     dispose,

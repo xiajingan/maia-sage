@@ -54,7 +54,8 @@ async function boot() {
       }
     } else {
       const saved = readNameReturn();
-      if (saved && saved.returnPath !== location.pathname) clearNameReturn();
+      if (saved && !("kind" in saved) && saved.returnPath !== location.pathname)
+        clearNameReturn();
       // Exactly one top-level attempt per ordinary boot. Callback errors never re-enter it.
       await controller.signIn(true, { sameSessionOnly: true });
       if (controller.state.phase !== "authenticating") clearNameReturn();
