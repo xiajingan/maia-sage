@@ -9,6 +9,7 @@ export type Credentials = {
   accessToken: string;
   idToken: string;
   subject: string;
+  expiresAt: number;
   returnPath?: string;
 };
 export interface Oidc {
@@ -19,6 +20,7 @@ export interface Oidc {
   callback(url: string): Promise<Credentials>;
   clear(preserveAuthorizationState?: boolean): void;
 }
+const recoveryBlockedKey = "sage.auth.recovery-blocked";
 export const LOGOUT_TIMEOUT_MS = 10_000;
 export interface Api {
   session(token: string): Promise<GetSessionResponse>;
@@ -71,20 +73,45 @@ export class ApiFailure extends Error {
 export function createSessionController({
   oidc,
   api,
+  now = Date.now,
 }: {
   oidc: Oidc;
   api: Api;
+  now?: () => number;
 }) {
   const state = shallowReactive<SessionState>({
     phase: "signed-out",
     canLogout: false,
   });
+  // A non-secret UX intent shared by this origin, never an authorization fact.
+  let recoveryBlocked = false;
+  function blockRecovery(blocked: boolean) {
+    recoveryBlocked = blocked;
+    try {
+      if (blocked) localStorage.setItem(recoveryBlockedKey, "true");
+      else localStorage.removeItem(recoveryBlockedKey);
+    } catch {
+      recoveryBlocked = true;
+    }
+  }
+  function isRecoveryBlocked() {
+    try {
+      return (
+        recoveryBlocked || localStorage.getItem(recoveryBlockedKey) !== null
+      );
+    } catch {
+      return true;
+    }
+  }
+  let restoring = false;
   let epoch = 0;
   let credentials: Credentials | undefined;
-  const reset = (phase: Phase) => {
+  const reset = (phase: Phase, preserveReadOnly = false) => {
     state.phase = phase;
-    state.session = undefined;
-    state.members = undefined;
+    if (!preserveReadOnly) {
+      state.session = undefined;
+      state.members = undefined;
+    }
     state.message = undefined;
     state.requestId = undefined;
     state.canReload = Boolean(credentials);
@@ -92,6 +119,7 @@ export function createSessionController({
   };
   async function callback(url: string) {
     const current = ++epoch;
+    restoring = false;
     activeLogout?.abort();
     operation = undefined;
     pending = false;
@@ -100,27 +128,52 @@ export function createSessionController({
     try {
       const result = await oidc.callback(url);
       if (current !== epoch) return;
+      if (
+        !Number.isSafeInteger(result.expiresAt) ||
+        result.expiresAt <= now() + 5_000
+      )
+        throw new Error("登录凭据到期信息无效");
       credentials = result;
-      await load();
-      if (current === epoch && state.session) return result.returnPath;
+      await readSession(false);
+      if (current === epoch) {
+        if (state.session) return result.returnPath;
+        blockRecovery(true);
+      }
     } catch {
       if (current === epoch) {
         credentials = undefined;
+        blockRecovery(true);
         oidc.clear();
         reset("error");
         state.message = "登录未完成，请重新登录。";
       }
     }
   }
-  async function load() {
-    if (!credentials || state.phase === "loading") return;
+  function load() {
+    return readSession(true);
+  }
+  async function readSession(allowRecovery: boolean) {
+    if (
+      !credentials ||
+      state.phase === "loading" ||
+      (allowRecovery && state.phase === "authenticating")
+    )
+      return;
     const current = epoch;
     const auth = credentials;
+    if (auth.expiresAt <= now() + 5_000) {
+      await expired(allowRecovery);
+      return;
+    }
     reset("loading");
     try {
       const session = await api.session(auth.accessToken);
       if (current !== epoch) return;
       if (session.user.id !== auth.subject) throw new ApiFailure(401);
+      if (auth.expiresAt <= now() + 5_000) {
+        await expired(allowRecovery);
+        return;
+      }
       state.session = session;
       try {
         const members = await api.members(
@@ -137,10 +190,21 @@ export function createSessionController({
       if (current === epoch) fail(error, false);
     }
   }
+  async function expired(allowRecovery: boolean) {
+    if (allowRecovery) await signIn(true, { sameSessionOnly: true });
+    else {
+      credentials = undefined;
+      blockRecovery(true);
+      oidc.clear();
+      reset("error");
+      state.message = "登录未完成，请重新登录。";
+    }
+  }
   function fail(error: unknown, partial: boolean) {
     const status = error instanceof ApiFailure ? error.status : 0;
     const requestId = error instanceof ApiFailure ? error.requestId : undefined;
     if (status === 401 || status === 403 || status === 404) {
+      blockRecovery(true);
       ++epoch;
       credentials = undefined;
       oidc.clear();
@@ -168,7 +232,12 @@ export function createSessionController({
     const auth = credentials;
     const isCurrent = () =>
       !signal.aborted && current === epoch && state.session === session;
-    if (!auth || !session || !isCurrent()) return;
+    if (!auth || !session || !isCurrent() || state.phase === "authenticating")
+      return;
+    if (auth.expiresAt <= now() + 5_000) {
+      await signIn(true, { sameSessionOnly: true });
+      return; // A top-level navigation must never dispatch the original action.
+    }
     try {
       const result = await request(auth.accessToken);
       if (isCurrent()) return result;
@@ -209,18 +278,34 @@ export function createSessionController({
     restore = false,
     options?: { sameSessionOnly: boolean },
   ) {
-    if (state.phase === "authenticating") return;
+    if (state.phase === "authenticating" && (restore || !restoring)) return;
     const current = ++epoch;
-    credentials = undefined;
+    if (restore && isRecoveryBlocked()) {
+      credentials = undefined;
+      oidc.clear();
+      reset("signed-out");
+      return;
+    }
+    restoring = restore;
+    if (!restore) {
+      credentials = undefined;
+      blockRecovery(false);
+    }
     activeLogout?.abort();
     operation = undefined;
     pending = false;
     oidc.clear();
-    reset("authenticating");
     try {
-      await oidc.signIn(restore, options);
+      // Capture the current stable path before synchronous session watchers navigate home.
+      const navigation = oidc.signIn(restore, options);
+      // Keep only the existing read-only view until pagehide saves its original references.
+      // The epoch and authenticating guard prevent business dispatch or late writes.
+      reset("authenticating", restore);
+      await navigation;
     } catch {
       if (current === epoch) {
+        credentials = undefined;
+        if (restore) blockRecovery(true);
         reset("error");
         state.message = "无法打开登录页，请重试。";
       }
@@ -229,6 +314,7 @@ export function createSessionController({
   async function logout() {
     if (pending) return;
     const idTokenHint = credentials?.idToken;
+    blockRecovery(true);
     ++epoch;
     credentials = undefined;
     oidc.clear();

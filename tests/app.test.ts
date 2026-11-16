@@ -10,6 +10,7 @@ test("已认证的读取错误页显示退出操作", async () => {
     oidc: {
       signIn: async () => {},
       callback: async () => ({
+        expiresAt: Date.now() + 300_000,
         accessToken: "test-access",
         idToken: "test-id",
         subject: "2",
@@ -37,6 +38,7 @@ test("退出待响应页允许重新登录并使旧退出结果失效", async ()
     oidc: {
       signIn: async () => {},
       callback: async () => ({
+        expiresAt: Date.now() + 300_000,
         accessToken: "test-access",
         idToken: "test-id",
         subject: "2",

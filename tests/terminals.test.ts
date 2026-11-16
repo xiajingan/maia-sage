@@ -145,6 +145,7 @@ test("旧会话终端请求的拒绝不会撤销新会话", async () => {
       signIn: async () => {},
       callback: async (subject) => ({
         subject,
+        expiresAt: Date.now() + 300_000,
         accessToken: subject,
         idToken: "id",
       }),

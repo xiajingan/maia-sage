@@ -483,3 +483,89 @@ test.each([false, true])(
     }
   },
 );
+
+// TC-SAGE-001 TC-SAGE-004
+test.each(["pagehide", "logout", "switch"])(
+  "短token恢复保留姓名引用到%s并阻止所有新业务",
+  async (outcome) => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    const h = await harness(() => Response.json(operation));
+    const store = memoryStorage();
+    vi.stubGlobal("sessionStorage", store);
+    vi.stubGlobal(
+      "window",
+      Object.assign(new EventTarget(), {
+        location: {
+          origin: "https://localhost",
+          href: "https://localhost/workspaces/1/channel-app-instances/20/contacts",
+        },
+        open: () => null,
+      }),
+    );
+    const c = createNameContextController(h);
+    c.select({ workspaceId: "1", instanceId: "20", scopeVersion: "1" });
+    await c.start("web");
+    const saved = store.getItem("sage.wecom.name-return");
+    expect(saved).not.toBeNull();
+    await h.session.signIn(true, { sameSessionOnly: true });
+    expect(h.session.state.phase).toBe("authenticating");
+    expect(store.getItem("sage.wecom.name-return")).toBe(saved);
+    const sent = h.requests.length;
+    await c.query();
+    await h.session.load();
+    expect(h.requests).toHaveLength(sent);
+    if (outcome === "pagehide") {
+      prepareNameNavigation();
+      h.session.dispose();
+      c.dispose();
+      expect(store.getItem("sage.wecom.name-return")).toBe(saved);
+    } else {
+      if (outcome === "logout") await h.session.logout();
+      else await h.session.signIn();
+      expect(store.getItem("sage.wecom.name-return")).toBeNull();
+      c.dispose();
+    }
+    expect(h.session.state.session).toBeUndefined();
+  },
+);
+
+test("恢复开始后姓名旧查询迟到不能接受新版本或继续完成副作用", async () => {
+  vi.stubGlobal("localStorage", memoryStorage());
+  let release!: (response: Response) => void;
+  const h = await harness((request) =>
+    request.method === "GET"
+      ? new Promise<Response>((resolve) => {
+          release = resolve;
+        })
+      : Response.json(operation),
+  );
+  const store = memoryStorage();
+  vi.stubGlobal("sessionStorage", store);
+  vi.stubGlobal(
+    "window",
+    Object.assign(new EventTarget(), {
+      location: {
+        origin: "https://localhost",
+        href: "https://localhost/workspaces/1/channel-app-instances/20/contacts",
+      },
+      open: () => null,
+    }),
+  );
+  const c = createNameContextController(h);
+  c.select({ workspaceId: "1", instanceId: "20", scopeVersion: "1" });
+  await c.start("web");
+  const original = store.getItem("sage.wecom.name-return");
+  const late = c.query();
+  await vi.waitFor(() => expect(h.requests).toHaveLength(2));
+  await h.session.signIn(true, { sameSessionOnly: true });
+  release(
+    Response.json({ ...operation, rowVersion: "2", nextAction: "complete" }),
+  );
+  await late;
+  expect(h.requests).toHaveLength(2);
+  expect(c.state.operation?.rowVersion).toBe("1");
+  expect(store.getItem("sage.wecom.name-return")).toBe(original);
+  prepareNameNavigation();
+  h.session.dispose();
+  c.dispose();
+});

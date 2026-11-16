@@ -34,14 +34,17 @@ export function businessReturnPath(
   try {
     const url = new URL(value, origin);
     if (url.origin !== origin || url.search || url.hash) return;
+    if (url.pathname === "/" || url.pathname === "/terminals")
+      return url.pathname;
     const route =
-      /^\/workspaces\/([^/]+)\/(?:wecom\/install-operations\/([^/]+)|channel-app-instances\/([^/]+)\/contacts)$/.exec(
+      /^\/workspaces\/([^/]+)\/(?:wecom(?:\/install-operations\/([^/]+))?|channel-app-instances\/([^/]+)\/contacts)$/.exec(
         url.pathname,
       );
     if (
       route &&
       Check(InstallViewSchema.properties.operationId, route[1]) &&
-      Check(InstallViewSchema.properties.operationId, route[2] ?? route[3])
+      (!(route[2] ?? route[3]) ||
+        Check(InstallViewSchema.properties.operationId, route[2] ?? route[3]))
     )
       return url.pathname;
   } catch {
@@ -61,6 +64,7 @@ export function createOidc(config: RuntimeConfig): Oidc {
     loadUserInfo: false,
     stateStore: store,
     staleStateAgeInSeconds: 600,
+    requestTimeoutInSeconds: 10,
     extraQueryParams: {
       claims: JSON.stringify({ id_token: { sid: { essential: true } } }),
     },
@@ -78,14 +82,15 @@ export function createOidc(config: RuntimeConfig): Oidc {
     clear,
     async signIn(restore = false, options) {
       const current = generation;
+      const returnPath = businessReturnPath(
+        window.location.href,
+        config.apiBaseUrl,
+      );
       await client.clearStaleState();
       const request = await client.createSigninRequest({
         nonce: crypto.randomUUID(),
         state: {
-          returnPath: businessReturnPath(
-            window.location.href,
-            config.apiBaseUrl,
-          ),
+          returnPath,
         },
         ...(options?.sameSessionOnly
           ? { prompt: "none" }
@@ -116,6 +121,9 @@ export function createOidc(config: RuntimeConfig): Oidc {
         const response = await client.processSigninResponse(url);
         if (!response.id_token || !response.access_token)
           throw new Error("缺少登录凭据");
+        const expiresAt = (response.expires_at ?? NaN) * 1000;
+        if (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now() + 5_000)
+          throw new Error("登录凭据到期信息无效");
         const metadata = await client.metadataService.getMetadata();
         if (
           !metadata.jwks_uri ||
@@ -141,6 +149,7 @@ export function createOidc(config: RuntimeConfig): Oidc {
           accessToken: response.access_token,
           idToken: response.id_token,
           subject,
+          expiresAt,
         };
       } finally {
         if (stateId)

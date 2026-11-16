@@ -294,7 +294,11 @@ export function createMudApi(baseUrl: string): Api & WecomApi & NameApi {
     },
     async session(token) {
       return read<GetSessionResponse>(
-        await getSession({ client, auth: token }),
+        await getSession({
+          client,
+          auth: token,
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        }),
         SessionViewSchema,
       );
     },
@@ -305,6 +309,7 @@ export function createMudApi(baseUrl: string): Api & WecomApi & NameApi {
           auth: token,
           path: { workspaceId },
           query: { limit: 20 },
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         }),
         MembersViewSchema,
       );

@@ -141,6 +141,13 @@ export function createNameContextController({
     () => select(undefined),
     { flush: "sync" },
   );
+  const stopPhase = watch(
+    () => session.state.phase,
+    (phase) => {
+      if (phase === "authenticating") suspend();
+    },
+    { flush: "sync" },
+  );
   function suspend() {
     ++epoch;
     abort.abort();
@@ -150,6 +157,7 @@ export function createNameContextController({
   }
   function dispose() {
     stopSession();
+    stopPhase();
     if (!leaving) clearNameReturn();
     if (typeof window !== "undefined")
       window.removeEventListener?.(navigationEvent, markLeaving);
@@ -159,6 +167,7 @@ export function createNameContextController({
   function valid() {
     return (
       selection &&
+      session.state.phase !== "authenticating" &&
       session.state.session?.rootWorkspace.id === selection.workspaceId
     );
   }

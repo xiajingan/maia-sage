@@ -74,6 +74,7 @@ export async function harness(
       signIn: async () => {},
       callback: async () => ({
         subject: "2",
+        expiresAt: Date.now() + 300_000,
         accessToken: "synthetic-access",
         idToken: "synthetic-id",
       }),

@@ -70,8 +70,14 @@ async function login(button = "登录或注册") {
 try {
   await page.goto(origin);
   await expect(
-    page.getByRole("heading", { name: "你的个人工作空间" }),
+    page.getByText("登录未完成，请重新登录。", { exact: true }),
   ).toBeVisible();
+  assert.deepEqual(prompts, ["none"]);
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "登录或注册", exact: true }),
+  ).toBeVisible();
+  assert.deepEqual(prompts, ["none"]);
   await screenshot("signed-out");
   const discovery = await page.evaluate(
     async () =>
@@ -125,7 +131,39 @@ try {
   await expect(
     page.getByRole("cell", { name: "管理者", exact: true }),
   ).toBeVisible();
-  assert.equal(prompts.at(-1), null);
+  assert.equal(prompts.at(-1), "none");
+  const reopened = await context.newPage();
+  await reopened.goto(origin + "/terminals");
+  await expect(
+    reopened.getByRole("heading", { name: "终端", exact: true }),
+  ).toBeVisible();
+  assert.equal(new URL(reopened.url()).pathname, "/terminals");
+  await reopened.close();
+  // UI expiry injection: retain the real token/JWS, shorten only client expiry metadata.
+  // Real 300-second bearer expiry is a separate integration check, not claimed here.
+  let expiresSoonAt;
+  await page.route(
+    "**/api/mud/auth/token",
+    async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      expiresSoonAt = Date.now() + 2500;
+      await route.fulfill({ response, json: { ...body, expires_in: 7 } });
+    },
+    { times: 1 },
+  );
+  await page.reload();
+  await expect(
+    page.getByRole("cell", { name: "管理者", exact: true }),
+  ).toBeVisible();
+  await expect.poll(() => Date.now() >= expiresSoonAt).toBe(true);
+  const beforeExpiry = prompts.length;
+  await page.getByRole("button", { name: "刷新成员" }).click();
+  await expect.poll(() => prompts.length).toBe(beforeExpiry + 1);
+  await expect(
+    page.getByRole("cell", { name: "管理者", exact: true }),
+  ).toBeVisible();
+  assert.equal(prompts.at(-1), "none");
   // 明确的浏览器UI故障注入：不计为真实后端验收。
   let release;
   const hold = new Promise((r) => {
@@ -258,6 +296,18 @@ try {
     timeout: 15000,
   });
   await screenshot("logout-unknown");
+  const afterUnknown = await context.newPage();
+  let unwantedRestore = 0;
+  afterUnknown.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith("/auth/auth"))
+      unwantedRestore++;
+  });
+  await afterUnknown.goto(origin);
+  await expect(
+    afterUnknown.getByRole("button", { name: "登录或注册", exact: true }),
+  ).toBeVisible();
+  assert.equal(unwantedRestore, 0);
+  await afterUnknown.close();
   await page.unroute("**/api/mud/auth/logout");
   const checkRetry = (r) => {
     if (new URL(r.url()).pathname.endsWith("/auth/logout"))
@@ -309,18 +359,20 @@ try {
       real: [
         "register/login",
         "memory-only tokens",
-        "refresh restore",
+        "startup no-cookie stops once",
+        "refresh/reopen prompt-none restore",
         "logout revocation",
         "same workspace re-login",
       ],
       uiInjected: [
+        "short expires_in pre-dispatch restore",
         "loading",
         "empty",
         "degraded",
         "error",
         "forbidden",
         "mobile-long",
-        "logout timeout/retry",
+        "logout timeout/retry/new-tab suppression",
         "pending re-login",
         "authenticated error logout",
         "invalid config",

@@ -17,6 +17,7 @@ if (location.pathname === "/wecom/name-context-result") {
       signIn: async () => {},
       callback: async () => ({
         subject: "2",
+        expiresAt: Date.now() + 300_000,
         accessToken: "synthetic-bearer",
         idToken: "synthetic-id",
       }),

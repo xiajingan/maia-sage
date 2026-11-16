@@ -260,6 +260,7 @@ try {
       errors.push("console-error");
   });
   await page.goto(origin);
+  await page.waitForURL((url) => url.pathname.endsWith("/authorize"));
   await page.evaluate(
     (path) =>
       sessionStorage.setItem(

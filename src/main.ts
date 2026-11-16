@@ -53,17 +53,11 @@ async function boot() {
         window.dispatchEvent(new PopStateEvent("popstate"));
       }
     } else {
-      const navigation = performance.getEntriesByType("navigation")[0] as
-        PerformanceNavigationTiming | undefined;
       const saved = readNameReturn();
       if (saved && saved.returnPath !== location.pathname) clearNameReturn();
-      if (
-        nameReturn ||
-        (navigation?.type === "reload" &&
-          saved?.returnPath === location.pathname)
-      )
-        await controller.signIn(true, { sameSessionOnly: true });
-      else if (navigation?.type === "reload") await controller.signIn(true);
+      // Exactly one top-level attempt per ordinary boot. Callback errors never re-enter it.
+      await controller.signIn(true, { sameSessionOnly: true });
+      if (controller.state.phase !== "authenticating") clearNameReturn();
     }
   } catch {
     createApp(App, { bootError: true }).mount("#app");
