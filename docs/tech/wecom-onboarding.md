@@ -38,7 +38,7 @@ sessionStorage 的 `sage.wecom.install` 既有安装分支保存 workspaceId、o
 
 恢复结果继续使用原稳定 operation 路由，App 入口清除该页 query/hash。已知 kind=recovery 的 query/complete 分别调用 `getWecomInstallRecovery`、`completeWecomInstallRecovery`；无存储或旧格式 kind 缺失时先恢复 GET，只有 Schema 合法的 404 NOT_FOUND 才回退旧 GET。其他拒绝、503、网络或非法响应均不降级。每次实际 HTTP dispatch 重新进入 session.withAccess，包括旧 GET 回退、source 发现及冲突后的当前轮查询；短 token 到期时结束原链，不拿旧闭包 token 继续请求。
 
-创建响应丢失后保留原 sourceId、rowVersion/key，由用户「核对原核验请求」先按精确 key 查询。查到则显示原轮；未查到时仅以同 key、同 body 明确重试，不自动换 key。不同 key 的 409 会终止该意图并删除冲突 key，再不带 key 查询当前轮，不记成当前轮别名；该轮过期也不会自动重发冲突 key。只有下次显式点击才有新 key。完成未知仍先查原新 operationId，不重发 complete。服务端返回 query_original 时关闭 OAuth/完成/恢复动作；没有自动轮询或清理循环。
+创建响应丢失后保留原 sourceId、rowVersion/key。刷新旧恢复轮路由或返回接入列表时，若仍有 recoveryPending，先只按其原 source/key 查询；查到则显示该请求创建的轮，未查到则保留原意图，普通 query 不 POST。只有当前 pending 的 POST 成功结果或精确 source/key 查询结果可以结清意图并关联已创建 key；普通旧轮 GET 不能把新 key 记给旧轮。用户明确「核对原核验请求」时仍先查原 key，未查到才以同 key、同 body 重试，不自动换 key。不同 key 的 409 会终止该意图并删除冲突 key，再不带 key 查询当前轮，不记成当前轮别名；该轮过期也不会自动重发冲突 key。只有下次显式点击才有新 key。完成未知仍先查原新 operationId，不重发 complete。服务端返回 query_original 时关闭 OAuth/完成/恢复动作；没有自动轮询或清理循环。
 
 恢复 member launch 及旧管理员独立 member 核验态提供「复制管理员身份核验链接」，复制服务端的同一 HTTPS URL，不另建 state 或请求 API。页面说明保留电脑页面及 Maia 登录，把链接交给本次企业管理员在手机企微内打开，无需在手机登录 Maia，完成后回电脑查询。企微内直接打开链接和旧 admin 链接保留。复制失败只在当前页面展示可选择的只读链接与反馈，不引入二维码或 Web provider login。
 

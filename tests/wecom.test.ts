@@ -996,7 +996,7 @@ test("recovery_unknown_reload_finds_exact_key_without_reposting", async () => {
   page.dispose();
   page = createWecomPage({ ...h, storage });
   await page.resume("10");
-  expect(page.state.unknownRecovery).toBe(true);
+  expect(page.state.unknownRecovery).toBe(false);
   await page.retryRecovery();
   expect(page.state.operation?.operationId).toBe("11");
   expect(h.requests.filter((r) => r.method === "POST")).toHaveLength(1);
@@ -1218,3 +1218,103 @@ test("recovery_legacy_fallback_dispatch_rechecks_short_token", async () => {
   expect(page.state.operation).toBeUndefined();
   page.dispose();
 });
+
+// TC-SAGE-003 — I-1: old round existence cannot settle the next round's key.
+test.each([
+  { created: true, route: "11" },
+  { created: false, route: "11" },
+  { created: true, route: undefined },
+  { created: false, route: undefined },
+])(
+  "recovery_unknown_second_round_reload created=$created route=$route",
+  async ({ created, route }) => {
+    const nextRound = { ...recovered, operationId: "12" };
+    let originalKey: string | undefined;
+    let posts = 0;
+    const h = await fixtureHarness(async (request) => {
+      const url = new URL(request.url);
+      if (request.method === "POST") {
+        posts++;
+        const body = await request.json();
+        if (posts === 1) {
+          originalKey = body.clientRequestId;
+          throw new Error("second-round response lost");
+        }
+        return Response.json(nextRound);
+      }
+      if (url.pathname.endsWith("/recovery")) {
+        expect(url.searchParams.get("clientRequestId")).toBe(originalKey);
+        return Response.json({
+          ...recoverySource,
+          recovery: created ? nextRound : null,
+        });
+      }
+      if (url.pathname.endsWith("/install-recoveries/12"))
+        return Response.json(nextRound);
+      return Response.json({
+        ...recovered,
+        phase: "expired",
+        nextAction: "recover",
+        launch: null,
+      });
+    });
+    const storage = memoryStorage();
+    let page = createWecomPage({ ...h, storage });
+    await page.resume("11");
+    await page.recover();
+    const originalBody = await h.requests
+      .find((request) => request.method === "POST")!
+      .json();
+    expect(page.state.unknownRecovery).toBe(true);
+    expect(
+      JSON.parse(storage.getItem("sage.wecom.install")!).recoveryPending.input,
+    ).toEqual(originalBody);
+    page.dispose();
+    const beforeReload = h.requests.length;
+    page = createWecomPage({ ...h, storage });
+    await page.resume(route);
+    const saved = JSON.parse(storage.getItem("sage.wecom.install")!);
+    expect({
+      operationId: saved.operationId,
+      clientRequestId: saved.clientRequestId,
+    }).not.toEqual({ operationId: "11", clientRequestId: originalKey });
+    const firstReloadRead = new URL(h.requests[beforeReload]!.url);
+    expect(firstReloadRead.pathname).toBe(
+      "/api/mud/v1/wecom/install-operations/10/recovery",
+    );
+    expect(firstReloadRead.searchParams.get("clientRequestId")).toBe(
+      originalKey,
+    );
+    expect(posts).toBe(1);
+    if (!created) {
+      expect(page.state.unknownRecovery).toBe(true);
+      expect(saved.recoveryPending.input).toEqual(originalBody);
+      expect(saved.clientRequestId).toBeUndefined();
+      await page.recover();
+      await page.query();
+      expect(posts).toBe(1);
+      expect(
+        JSON.parse(storage.getItem("sage.wecom.install")!).recoveryPending
+          .input,
+      ).toEqual(originalBody);
+      await page.retryRecovery();
+      const actualPosts = h.requests.filter(
+        (request) => request.method === "POST",
+      );
+      expect(actualPosts).toHaveLength(2);
+      expect(await actualPosts[1]!.json()).toEqual(originalBody);
+    } else {
+      expect(page.state.operation?.operationId).toBe("12");
+      await page.query();
+      await page.retryRecovery();
+      expect(posts).toBe(1);
+    }
+    expect(page.state.operation?.operationId).toBe("12");
+    expect(page.state.unknownRecovery).toBe(false);
+    const settled = JSON.parse(storage.getItem("sage.wecom.install")!);
+    expect(settled.operationId).toBe("12");
+    expect(settled.clientRequestId).toBe(originalKey);
+    expect(settled.recoveryPending).toBeUndefined();
+    page.dispose();
+  },
+);

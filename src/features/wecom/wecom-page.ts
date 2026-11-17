@@ -189,6 +189,7 @@ export function createWecomPage({
       signal: AbortSignal,
     ) => Promise<Operation | undefined>,
     restoringKnownReference = false,
+    resolvedRecovery?: RecoveryPending,
   ) {
     if (!allowed() || state.busy) return;
     const signal = abort.signal;
@@ -224,10 +225,12 @@ export function createWecomPage({
         );
       if (state.kind === "recovery") {
         state.source = undefined;
-        if (recoveryPending)
+        // Only this request's successful POST or exact-key lookup can settle it.
+        if (recoveryPending && recoveryPending === resolvedRecovery) {
           createdRecoveryKey = recoveryPending.input.clientRequestId;
-        recoveryPending = undefined;
-        state.unknownRecovery = false;
+          recoveryPending = undefined;
+        }
+        state.unknownRecovery = Boolean(recoveryPending);
       }
       state.operationId = result.operationId;
       pending = undefined;
@@ -410,52 +413,61 @@ export function createWecomPage({
   async function submitRecovery() {
     const original = recoveryPending;
     if (!original) return;
-    await execute(async (token, signal) => {
-      try {
-        return await api.createWecomInstallRecovery(
-          token,
-          original.sourceId,
-          original.input,
-          signal,
-        );
-      } catch (error) {
-        if (!(error instanceof ApiFailure && error.status === 409)) throw error;
-        // A conflicting key never becomes an alias for another round.
-        if (signal.aborted || !allowed()) throw error;
-        recoveryPending = undefined;
-        createdRecoveryKey = undefined;
-        state.unknownRecovery = false;
-        save();
-        const source = await session.withAccess(signal, (freshToken) =>
-          api.getWecomInstallRecoverySource(
-            freshToken,
+    await execute(
+      async (token, signal) => {
+        try {
+          return await api.createWecomInstallRecovery(
+            token,
             original.sourceId,
-            undefined,
+            original.input,
             signal,
-          ),
-        );
-        if (!source) return;
-        if (!signal.aborted && allowed()) state.source = source;
-        if (source.recovery) return source.recovery;
-        return state.operation!;
-      }
-    });
+          );
+        } catch (error) {
+          if (!(error instanceof ApiFailure && error.status === 409))
+            throw error;
+          // A conflicting key never becomes an alias for another round.
+          if (signal.aborted || !allowed()) throw error;
+          recoveryPending = undefined;
+          createdRecoveryKey = undefined;
+          state.unknownRecovery = false;
+          save();
+          const source = await session.withAccess(signal, (freshToken) =>
+            api.getWecomInstallRecoverySource(
+              freshToken,
+              original.sourceId,
+              undefined,
+              signal,
+            ),
+          );
+          if (!source) return;
+          if (!signal.aborted && allowed()) state.source = source;
+          if (source.recovery) return source.recovery;
+          return state.operation!;
+        }
+      },
+      false,
+      original,
+    );
   }
   async function retryRecovery(allowRetry = true) {
     const original = recoveryPending;
     if (!original || state.busy || !allowed()) return;
     let notCreated = false;
-    await execute(async (token, signal) => {
-      const source = await api.getWecomInstallRecoverySource(
-        token,
-        original.sourceId,
-        original.input.clientRequestId,
-        signal,
-      );
-      if (source.recovery) return source.recovery;
-      notCreated = true;
-      return undefined;
-    });
+    await execute(
+      async (token, signal) => {
+        const source = await api.getWecomInstallRecoverySource(
+          token,
+          original.sourceId,
+          original.input.clientRequestId,
+          signal,
+        );
+        if (source.recovery) return source.recovery;
+        notCreated = true;
+        return undefined;
+      },
+      false,
+      original,
+    );
     if (allowRetry && notCreated && allowed() && recoveryPending === original) {
       state.unknownRecovery = true;
       // Only this explicit retry may resend the exact original body/key.
@@ -579,6 +591,11 @@ export function createWecomPage({
       }
     } catch {
       /* Invalid recovery references grant no access. */
+    }
+    if (recoveryPending) {
+      // The saved operation can be an older round; it is not this key's result.
+      await retryRecovery(false);
+      return;
     }
     const operationId = state.operationId;
     if (operationId)

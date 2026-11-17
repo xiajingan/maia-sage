@@ -28,13 +28,13 @@ US-038 AC-01、03、04、05、08、09、10、11、12、13 的 Sage 接入/未知
 9. 在桌面与移动 Chrome 检查正常、空、加载、错误、降级和无权页面，原型提供同类状态。联系人表内滚动不使整页溢出，控制台没有异常。
 
 10. 原 expired 页面仅在 source view 允许 recover 时显示「使用已保存结果重新核验管理员身份」。点击只调用 recover，显示业务 Suite member OAuth；再次过期仍使用原 source/最新 sourceRowVersion 与新 key，不重发 admin 安装。
-11. recover 响应丢失先 GET 精确 key，找到原轮不 POST；未找到仅明确重试同 body/key。不同 key 的409结束冲突意图，再无 key 查询当前轮；不保存别名、过期后不自动重试，下一轮必须显式点击。恢复 complete 未知只能先 GET 原恢复操作。
+11. recover 响应丢失先 GET 精确 key，找到原轮不 POST；未找到仅明确重试同 body/key。尤其在旧恢复轮11上创建下一轮的 key B 响应丢失后，刷新旧轮路由或回列表都必须先查 B；B已创建12时显示12，未创建时保留原 body/B，普通查询不 POST，明确重试仍只用原 body/B；不得把 B 记为旧轮11的已创建 key。不同 key 的409结束冲突意图，再无 key 查询当前轮；不保存别名、过期后不自动重试，下一轮必须显式点击。恢复 complete 未知只能先 GET 原恢复操作。
 12. 无 storage 的稳定结果页先恢复 GET，只有合法 NOT_FOUND404 回退旧 GET；503、403和非法恢复/旧 Schema 响应不能降级。已知 kind 按所属 API 查询/完成。来源超过24小时显示安全说明，无恢复按钮、无自动安装；根/sid/失权与旧请求迟到不能复活页面。
 13. 复制同一服务端 member launch，说明电脑保留 Maia 登录、手机企微内打开且无需 Maia 登录、完成后回电脑查询。复制失败给本页只读可选择链接；传递不触发 create/recover、不持久化 URL。异步复制失败在会话切换、查询进入非 authorize 或到期之后返回，不得恢复旧链接；手机断点无页面横向溢出。
 
 ## 测试代码
 
-- [tests/wecom.test.ts](../../tests/wecom.test.ts)：`unknown_keeps_operation`、`result_reload_not_invite`、`expired_result_offers_recovery`、`recovery_expires_again`、`recovery_create_unknown_queries_original_key`、`recovery_reload_without_storage`、`recovery_stale_response_and_source_expired`、`recovery_identity_handoff`，以及迟到复制、409无别名、Schema分派、第二轮未知重试与旧引用/权限清理。
+- [tests/wecom.test.ts](../../tests/wecom.test.ts)：`unknown_keeps_operation`、`result_reload_not_invite`、`expired_result_offers_recovery`、`recovery_expires_again`、`recovery_create_unknown_queries_original_key`、`recovery_reload_without_storage`、`recovery_stale_response_and_source_expired`、`recovery_identity_handoff`，以及迟到复制、409无别名、Schema分派、第二轮未知重试、`recovery_unknown_second_round_reload` 的已创建/未创建及旧路由/列表组合与旧引用/权限清理。
 - [tests/contacts.test.ts](../../tests/contacts.test.ts)：`contact_partial_and_permissions`、分页与双向同步范围竞态、`older sync query cannot replace accepted page facts` 三种交错、旧查询失败隔离、原未知请求核对及当前 401/403 清理。
 - [scripts/check-wecom-browser.mjs](../../scripts/check-wecom-browser.mjs)：`pnpm check:wecom-browser`，真实Chrome中的合成Vue流程与原型验证，包含恢复入口、同一链接复制与失败手选、迟到clipboard与到期清理、无storage刷新、源结果过期说明、同组件旧深链接404返回正常列表、无自动POST及显式新admin。
 - [tests/terminals.test.ts](../../tests/terminals.test.ts) 保留旧终端会话行为回归；认证返回路径验证见 [tests/oidc.test.ts](../../tests/oidc.test.ts) 与 [tests/session.test.ts](../../tests/session.test.ts)。

@@ -96,6 +96,10 @@ try {
   let recoveryPosts = 0,
     sourceUnavailable = false;
   const recoveryKeys = [];
+  const nextRecovery = { ...recovery, operationId: "12" };
+  let lostRoundKey;
+  const recoveryRoundReads = [];
+  const recoverySourceReads = [];
   const instance = {
     instanceId: "20",
     workspaceId: "1",
@@ -176,27 +180,52 @@ try {
         : route.fulfill({
             json: { items: instancesEmpty ? [] : [instance], nextCursor: null },
           });
-    if (path.endsWith("/install-recoveries/11"))
-      return route.fulfill({ json: recovery });
+    if (
+      path.endsWith("/install-recoveries/11") ||
+      path.endsWith("/install-recoveries/12")
+    ) {
+      recoveryRoundReads.push(path);
+      return route.fulfill({
+        json: path.endsWith("/12") ? nextRecovery : recovery,
+      });
+    }
     if (path.includes("/install-recoveries/"))
       return route.fulfill({
         status: 404,
         json: { ...safeError, code: "NOT_FOUND" },
       });
-    if (path.endsWith("/install-operations/10/recovery"))
+    if (path.endsWith("/install-operations/10/recovery")) {
+      recoverySourceReads.push(url.searchParams.get("clientRequestId"));
       return route.fulfill({
         json: {
           sourceOperationId: "10",
           rowVersion: "1",
           nextAction: sourceUnavailable ? "none" : "recover",
           safeReason: sourceUnavailable ? "recovery_source_expired" : null,
-          recovery: null,
+          recovery:
+            mode === "second-round-created" &&
+            url.searchParams.get("clientRequestId") === lostRoundKey
+              ? nextRecovery
+              : null,
         },
       });
+    }
     if (path.endsWith("/install-operations/10/recover")) {
       recoveryPosts++;
       recoveryKeys.push(req.postDataJSON().clientRequestId);
       assert.equal(req.postDataJSON().rowVersion, "1");
+      if (
+        mode === "second-round-created" ||
+        mode === "second-round-uncreated"
+      ) {
+        lostRoundKey = req.postDataJSON().clientRequestId;
+        return route.fulfill({
+          status: 503,
+          json: { ...safeError, code: "RESULT_UNKNOWN" },
+        });
+      }
+      if (mode === "second-round-retry")
+        return route.fulfill({ json: nextRecovery });
       if (mode === "recovery-create-lost")
         return route.fulfill({
           status: 503,
@@ -489,6 +518,71 @@ try {
     await expect(button("复制管理员身份核验链接")).toBeVisible();
     assert.equal(recoveryPosts, 4);
     assert.equal(recoveryKeys[2], recoveryKeys[3]);
+    // I-1: refreshing old recovery11 must resolve key B, never alias it to 11.
+    for (const created of [true, false]) {
+      Object.assign(recovery, {
+        phase: "expired",
+        nextAction: "recover",
+        launch: null,
+      });
+      await page.evaluate(() =>
+        sessionStorage.removeItem("sage.wecom.install"),
+      );
+      mode = created ? "second-round-created" : "second-round-uncreated";
+      await page.goto(`${origin}/workspaces/1/wecom/install-operations/11`);
+      const postsBefore = recoveryPosts;
+      await button("重新核验管理员身份").click();
+      await expect(button("核对原核验请求")).toBeVisible();
+      const originalKey = lostRoundKey;
+      const sourceReadsBefore = recoverySourceReads.length;
+      const roundReadsBefore = recoveryRoundReads.length;
+      await page.reload();
+      if (created) {
+        await expect(page).toHaveURL(
+          `${origin}/workspaces/1/wecom/install-operations/12`,
+        );
+        await expect(button("复制管理员身份核验链接")).toBeVisible();
+      } else {
+        await expect(button("核对原核验请求")).toBeVisible();
+        const saved = await page.evaluate(() =>
+          JSON.parse(sessionStorage.getItem("sage.wecom.install")),
+        );
+        assert.equal(saved.operationId, "11");
+        assert.equal(saved.recoveryPending.input.clientRequestId, originalKey);
+        assert.equal(saved.clientRequestId, undefined);
+        await button("查询原操作").click();
+        assert.equal(recoveryPosts, postsBefore + 1);
+      }
+      assert.equal(recoverySourceReads[sourceReadsBefore], originalKey);
+      assert(
+        !recoveryRoundReads
+          .slice(roundReadsBefore)
+          .some((path) => path.endsWith("/11")),
+      );
+      assert.equal(recoveryPosts, postsBefore + 1);
+      if (!created) {
+        mode = "second-round-retry";
+        await button("核对原核验请求").click();
+        await expect(page).toHaveURL(
+          `${origin}/workspaces/1/wecom/install-operations/12`,
+        );
+        await expect(button("复制管理员身份核验链接")).toBeVisible();
+        assert.equal(recoveryPosts, postsBefore + 2);
+        assert.equal(recoveryKeys.at(-1), originalKey);
+      }
+      const saved = await page.evaluate(() =>
+        JSON.parse(sessionStorage.getItem("sage.wecom.install")),
+      );
+      assert.equal(saved.operationId, "12");
+      assert.equal(saved.clientRequestId, originalKey);
+      assert.equal(saved.recoveryPending, undefined);
+    }
+    mode = "ready";
+    Object.assign(recovery, {
+      phase: "awaiting_authorization",
+      nextAction: "authorize",
+      launch: nextRecovery.launch,
+    });
     sourceUnavailable = true;
     await page.evaluate(() => sessionStorage.removeItem("sage.wecom.install"));
     await page.goto(`${origin}/workspaces/1/wecom/install-operations/10`);
