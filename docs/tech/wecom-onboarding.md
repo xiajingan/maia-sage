@@ -4,7 +4,7 @@
 
 ## 页面与客户端
 
-入口位于当前个人工作空间的「企业微信接入」。安装控制器为 `createWecomPage({api,session})`，联系人控制器为 `createContactPage({api,session})`，均通过同一个 [Mud API adapter](../../src/api/mud.ts) 调用生成方法、校验生成 Schema。DTO 取自冻结的 `maia-mud-client@0.5.0`，摘要和升级方式见[认证依赖](authentication.md#结构与依赖)。
+入口位于当前个人工作空间的「企业微信接入」。安装控制器为 `createWecomPage({api,session})`，联系人控制器为 `createContactPage({api,session})`，均通过同一个 [Mud API adapter](../../src/api/mud.ts) 调用生成方法、校验生成 Schema。DTO 取自 Mud 发布的 `maia-mud-client@0.6.0`，摘要和升级方式见[认证依赖](authentication.md#结构与依赖)。
 
 | 页面       | 固定路径                                                              |
 | ---------- | --------------------------------------------------------------------- |
@@ -18,11 +18,11 @@
 
 管理者选择成员扫码或管理员入口，服务端返回原 operationId、nextAction、rowVersion 及当前 launch。页面按 launch.kind 呈现当前步骤；管理员接入若要求独立身份核验且 launch.kind 为 member，显示「核验管理员身份」，不改称成员安装。
 
-授权入口只由用户在新窗口打开，保留原 Maia 会话；回到原窗口后查询原操作，只有服务端 nextAction 为 complete 时允许提交所见 rowVersion。窗口不开启自动重试、循环授权或原始 code 传递。页面不读取返回页 code，也不通过 postMessage 接收凭据。结果未知时保留原操作并先查询，完成请求未知后在取得新查询结果前关闭完成按钮。
+原 admin 安装入口由用户在新窗口打开，保留原 Maia 会话；member 管理员核验同时提供下述手机传递入口。回到原窗口后查询原操作，只有服务端 nextAction 为 complete 时允许提交所见 rowVersion。窗口不开启自动重试、循环授权或原始 code 传递。页面不读取返回页 code，也不通过 postMessage 接收凭据。结果未知时保留原操作并先查询，完成请求未知后在取得新查询结果前关闭完成按钮。
 
 create 尚未返回 operationId 时，页面保留原 clientRequestId 和 mode，由用户明确「核对原发起请求」重复同内容的幂等请求，不生成新 key。已取得 operationId 后只查询原 ID，不重放一次性邀请。已读取的原操作只有服务端允许 start_new 后才可由用户明确重新发起；正常列表对已确认不可读的普通恢复引用另按下述边界处理。
 
-sessionStorage 的 `sage.wecom.install` 只存 workspaceId、operationId、非秘密布尔 mustQuery，或尚无结果的原幂等输入。它不存 Bearer、code、launch URL、成员资料或权限。恢复引用只用来查询，归属与 sid 仍由服务端校验。存储不可用时，当前内存查询与已知稳定 operationId 查询仍可使用；complete 必须先成功持久化 mustQuery=true 才能发送，保存失败则停止提交，避免遗留的 false 标记掩盖未知结果。短token恢复在dispatch前挡住complete时，不写已发送标记。成功查询/完成只依据服务端 nextAction 更新标记，query_original 仍保持待核对；缺少该字段的旧格式引用保守视为待核对，须先成功读取才能解除。
+sessionStorage 的 `sage.wecom.install` 既有安装分支保存 workspaceId、operationId、kind、非秘密布尔 mustQuery，或尚无结果的原幂等输入；恢复字段见下节。它不存 Bearer、code、launch URL、成员资料或权限。恢复引用只用来查询，归属与 sid 仍由服务端校验。存储不可用时，当前内存查询与已知稳定 operationId 查询仍可使用；complete 必须先成功持久化 mustQuery=true 才能发送，保存失败则停止提交，避免遗留的 false 标记掩盖未知结果。短token恢复在dispatch前挡住complete时，不写已发送标记。成功查询/完成只依据服务端 nextAction 更新标记，query_original 仍保持待核对；缺少该字段的旧格式引用保守视为待核对，须先成功读取才能解除。
 
 正常接入列表仅自动恢复本Workspace的已知operationId。只有保存的mustQuery明确为false、没有未知create输入，且该自动查询返回404时，页面才继续查询当前Workspace实例列表；列表成功后移除这一不可读引用，显示当前列表，由管理者显式开始新的操作。没有自动create、complete或邀请重放。403、显式旧操作深链接/主动查询的404、列表权限拒绝仍显示拒绝；列表503/网络错误保留原引用并阻止新建。读取成功的新事实会取消之前的“旧引用不可读”判断，迟到列表不得清掉后来核对成功的操作。
 
@@ -31,6 +31,18 @@ sessionStorage 的 `sage.wecom.install` 只存 workspaceId、operationId、非�
 认证往返的业务返回路径绑定在既有 OIDC state.data 中。保存、callback读取和主入口导航沿[认证返回白名单](authentication.md#协议及隔离)校验当前稳定入口，必须同源且没有query/hash，ID按生成Schema验证正十进制BIGINT上界。OidcClient 消费协议 state 后删除记录；身份签名、nonce、generation 与会话 epoch/读取成功条件都成立后，controller.callback 才释放可选 returnPath。它只表示导航意图，不授予读取权限；姓名授权返回另用显式同会话恢复选项，见[姓名展示](#姓名组件与页面授权)。
 
 安装完成仅表示可信绑定或恢复完成。实例卡片分别展示安装、联系人同步、会话存档、终端条件、范围核对和最近可信时间；没有可执行 Account 时不显示 Tea/Celt 就绪。部分同步与范围待核对不会被安装完成覆盖。
+
+## 已保存结果的管理员身份恢复
+
+原管理员安装结果页进入 expired 时，通过 `getWecomInstallRecoverySource` 读取当前来源资格。只有服务端允许 recover 才显示「使用已保存结果重新核验管理员身份」，说明只核验、不会重新安装。发现已存在当前轮时直接呈现该轮；关联只用于查询，不提供权限。新一轮必须显式点击 `recover()`，以 source view 的 sourceOperationId/rowVersion 和新 clientRequestId 调用 `createWecomInstallRecovery`。恢复轮再次过期时仍指向最初 source，使用恢复 view 的 sourceRowVersion 与新的 key；不调用旧 createWecomInstallOperation 或申请安装入口。
+
+恢复结果继续使用原稳定 operation 路由，App 入口清除该页 query/hash。已知 kind=recovery 的 query/complete 分别调用 `getWecomInstallRecovery`、`completeWecomInstallRecovery`；无存储或旧格式 kind 缺失时先恢复 GET，只有 Schema 合法的 404 NOT_FOUND 才回退旧 GET。其他拒绝、503、网络或非法响应均不降级。每次实际 HTTP dispatch 重新进入 session.withAccess，包括旧 GET 回退、source 发现及冲突后的当前轮查询；短 token 到期时结束原链，不拿旧闭包 token 继续请求。
+
+创建响应丢失后保留原 sourceId、rowVersion/key，由用户「核对原核验请求」先按精确 key 查询。查到则显示原轮；未查到时仅以同 key、同 body 明确重试，不自动换 key。不同 key 的 409 会终止该意图并删除冲突 key，再不带 key 查询当前轮，不记成当前轮别名；该轮过期也不会自动重发冲突 key。只有下次显式点击才有新 key。完成未知仍先查原新 operationId，不重发 complete。服务端返回 query_original 时关闭 OAuth/完成/恢复动作；没有自动轮询或清理循环。
+
+恢复 member launch 及旧管理员独立 member 核验态提供「复制管理员身份核验链接」，复制服务端的同一 HTTPS URL，不另建 state 或请求 API。页面说明保留电脑页面及 Maia 登录，把链接交给本次企业管理员在手机企微内打开，无需在手机登录 Maia，完成后回电脑查询。企微内直接打开链接和旧 admin 链接保留。复制失败只在当前页面展示可选择的只读链接与反馈，不引入二维码或 Web provider login。
+
+恢复存储沿用 `sage.wecom.install`：仅增加 kind、sourceId/sourceRowVersion、已确认创建的 clientRequestId，或 recoveryPending 的 sourceId、原 rowVersion/key。launch URL、code/state/token 不进入浏览器存储、日志或报告。查询、失权、根/User/会话变化、操作切换及本轮 expiresAt 到期会清掉手工链接/复制反馈；迟到的 clipboard 结果只有当前操作、当前会话仍允许同一 launch 时才可显示。到期后提示查询原操作，是否能新建一轮仍由服务端判断。源结果超过24小时或不可用时展示「已保存结果已不可核验，请重新取得可信授权」，不显示恢复按钮、不自动安装；旧新授权入口仍需另一次显式操作。
 
 ## 联系人、同步与清理
 

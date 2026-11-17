@@ -82,6 +82,20 @@ try {
     rowVersion: "1",
     launch: { kind: "admin", url: "https://synthetic.example/install" },
   };
+  const recovery = {
+    ...operation,
+    operationId: "11",
+    sourceOperationId: "10",
+    sourceRowVersion: "1",
+    safeReason: "administrator_identity_required",
+    launch: {
+      kind: "member",
+      url: "https://synthetic.example/recovery-identity",
+    },
+  };
+  let recoveryPosts = 0,
+    sourceUnavailable = false;
+  const recoveryKeys = [];
   const instance = {
     instanceId: "20",
     workspaceId: "1",
@@ -162,6 +176,34 @@ try {
         : route.fulfill({
             json: { items: instancesEmpty ? [] : [instance], nextCursor: null },
           });
+    if (path.endsWith("/install-recoveries/11"))
+      return route.fulfill({ json: recovery });
+    if (path.includes("/install-recoveries/"))
+      return route.fulfill({
+        status: 404,
+        json: { ...safeError, code: "NOT_FOUND" },
+      });
+    if (path.endsWith("/install-operations/10/recovery"))
+      return route.fulfill({
+        json: {
+          sourceOperationId: "10",
+          rowVersion: "1",
+          nextAction: sourceUnavailable ? "none" : "recover",
+          safeReason: sourceUnavailable ? "recovery_source_expired" : null,
+          recovery: null,
+        },
+      });
+    if (path.endsWith("/install-operations/10/recover")) {
+      recoveryPosts++;
+      recoveryKeys.push(req.postDataJSON().clientRequestId);
+      assert.equal(req.postDataJSON().rowVersion, "1");
+      if (mode === "recovery-create-lost")
+        return route.fulfill({
+          status: 503,
+          json: { ...safeError, code: "RESULT_UNKNOWN" },
+        });
+      return route.fulfill({ json: recovery });
+    }
     if (path.endsWith("/wecom/install-operations")) {
       installPosts++;
       return route.fulfill({ json: operation });
@@ -184,7 +226,7 @@ try {
             status: 404,
             json: { ...safeError, code: "NOT_FOUND" },
           })
-        : mode === "operation-error"
+        : mode === "operation-error" || mode === "recovery-read-lost"
           ? route.fulfill({ status: 503, json: safeError })
           : route.fulfill({ json: operation });
     }
@@ -299,6 +341,172 @@ try {
       JSON.stringify({ ...sessionStorage }),
     );
     assert(!/synthetic\.example|browser-fixture|Bearer/.test(storage));
+    // Recovery uses only synthetic responses on the existing public adapter.
+    Object.assign(operation, {
+      phase: "expired",
+      nextAction: "start_new",
+      instanceId: null,
+      launch: null,
+    });
+    await button("查询原操作").click();
+    await expect(button("使用已保存结果重新核验管理员身份")).toBeVisible();
+    await expect(
+      page.getByText("只重新核验管理员身份，不会重新安装。", { exact: true }),
+    ).toBeVisible();
+    await button("使用已保存结果重新核验管理员身份").click();
+    await expect(page).toHaveURL(
+      `${origin}/workspaces/1/wecom/install-operations/11`,
+    );
+    await expect(button("复制管理员身份核验链接")).toBeVisible();
+    await expect(button("重新核验管理员身份")).toHaveCount(0);
+    await expect(
+      page.getByText("保留此电脑页面与当前 Maia 登录", { exact: false }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("无需在手机登录 Maia", { exact: false }),
+    ).toBeVisible();
+    await page.evaluate(() =>
+      Object.defineProperty(globalThis.navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async (value) => {
+            globalThis.__copied = value;
+          },
+        },
+      }),
+    );
+    await button("复制管理员身份核验链接").click();
+    assert.equal(
+      await page.evaluate(() => globalThis.__copied),
+      recovery.launch.url,
+    );
+    assert.equal(recoveryPosts, 1);
+    assert.equal(installPosts, 1);
+    await page.evaluate(() =>
+      Object.defineProperty(globalThis.navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async () => {
+            throw new Error("synthetic denial");
+          },
+        },
+      }),
+    );
+    await button("复制管理员身份核验链接").click();
+    const manualLink = page.getByLabel("管理员身份核验链接（只读）");
+    await expect(manualLink).toHaveValue(recovery.launch.url);
+    await expect(manualLink).toHaveAttribute("readonly", "");
+    await manualLink.focus();
+    assert.equal(
+      await manualLink.evaluate((el) => el.selectionEnd - el.selectionStart),
+      recovery.launch.url.length,
+    );
+    await page.setViewportSize({ width: 375, height: 812 });
+    assert(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    );
+    await mkdir("/tmp/maia-sage-wecom-ui", { recursive: true });
+    await page.evaluate(() => globalThis.scrollTo(0, 0));
+    await page.locator("section.panel").first().screenshot({
+      path: "/tmp/maia-sage-wecom-ui/recovery-handoff-synthetic.png",
+    });
+    // Late clipboard failure after query changes the authorized action cannot restore fallback.
+    await page.evaluate(() =>
+      Object.defineProperty(globalThis.navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: () =>
+            new Promise((_resolve, reject) => {
+              globalThis.__rejectCopy = () =>
+                reject(new Error("synthetic denial"));
+            }),
+        },
+      }),
+    );
+    await button("复制管理员身份核验链接").click();
+    Object.assign(recovery, { nextAction: "query_original", launch: null });
+    await button("查询原操作").click();
+    await page.evaluate(() => globalThis.__rejectCopy());
+    await expect(manualLink).toHaveCount(0);
+    await expect(button("复制管理员身份核验链接")).toHaveCount(0);
+    Object.assign(recovery, {
+      nextAction: "authorize",
+      expiresAt: Date.now() + 500,
+      launch: {
+        kind: "member",
+        url: "https://synthetic.example/recovery-identity",
+      },
+    });
+    await button("查询原操作").click();
+    await expect(button("复制管理员身份核验链接")).toBeVisible();
+    await expect(button("复制管理员身份核验链接")).toHaveCount(0);
+    Object.assign(recovery, {
+      phase: "expired",
+      nextAction: "recover",
+      launch: null,
+    });
+    await button("查询原操作").click();
+    await expect(button("重新核验管理员身份")).toBeVisible();
+    Object.assign(recovery, {
+      phase: "awaiting_authorization",
+      nextAction: "authorize",
+      expiresAt: 1900000000000,
+      launch: {
+        kind: "member",
+        url: "https://synthetic.example/recovery-identity",
+      },
+    });
+    await button("重新核验管理员身份").click();
+    assert.equal(recoveryPosts, 2);
+    assert.notEqual(recoveryKeys[0], recoveryKeys[1]);
+    await page.evaluate(() => sessionStorage.removeItem("sage.wecom.install"));
+    await page.goto(
+      `${origin}/workspaces/1/wecom/install-operations/11?synthetic=discard#discard`,
+    );
+    await expect(page).toHaveURL(
+      `${origin}/workspaces/1/wecom/install-operations/11`,
+    );
+    await expect(button("复制管理员身份核验链接")).toBeVisible();
+    assert.equal(recoveryPosts, 2);
+    assert(
+      !/synthetic\.example|browser-fixture|Bearer/.test(
+        await page.evaluate(() => JSON.stringify({ ...sessionStorage })),
+      ),
+    );
+    await page.evaluate(() => sessionStorage.removeItem("sage.wecom.install"));
+    mode = "recovery-create-lost";
+    await page.goto(`${origin}/workspaces/1/wecom/install-operations/10`);
+    await button("使用已保存结果重新核验管理员身份").click();
+    await expect(button("核对原核验请求")).toBeVisible();
+    mode = "recovery-read-lost";
+    await page.reload();
+    await expect(button("查询原操作")).toBeVisible();
+    await expect(button("核对原核验请求")).toBeVisible();
+    mode = "ready";
+    await button("核对原核验请求").click();
+    await expect(button("复制管理员身份核验链接")).toBeVisible();
+    assert.equal(recoveryPosts, 4);
+    assert.equal(recoveryKeys[2], recoveryKeys[3]);
+    sourceUnavailable = true;
+    await page.evaluate(() => sessionStorage.removeItem("sage.wecom.install"));
+    await page.goto(`${origin}/workspaces/1/wecom/install-operations/10`);
+    await expect(
+      page.getByText("已保存结果已不可核验，请重新取得可信授权。", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(button("使用已保存结果重新核验管理员身份")).toHaveCount(0);
+    assert.equal(installPosts, 1);
+    Object.assign(operation, {
+      phase: "completed",
+      nextAction: "none",
+      instanceId: "20",
+      launch: null,
+    });
+    await button("查询原操作").click();
+    await page.setViewportSize({ width: 1280, height: 900 });
     instancesEmpty = false;
     await button("刷新实例").click();
     const card = page.locator('[data-instance-id="20"]');
@@ -440,6 +648,28 @@ try {
       `${origin}/workspaces/1/wecom/install-operations/11`,
     );
     assert.equal(installPosts, postsBeforeList + 1);
+    await page.evaluate(() => sessionStorage.removeItem("sage.wecom.install"));
+    await page.goto(`${origin}/workspaces/1/wecom/install-operations/11`);
+    await expect(button("复制管理员身份核验链接")).toBeVisible();
+    await page.evaluate(() =>
+      Object.defineProperty(globalThis.navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: () =>
+            new Promise((_resolve, reject) => {
+              globalThis.__rejectCopy = () =>
+                reject(new Error("synthetic denial"));
+            }),
+        },
+      }),
+    );
+    await button("复制管理员身份核验链接").click();
+    await button("退出登录").click();
+    await page.evaluate(() => globalThis.__rejectCopy());
+    await expect(page.getByLabel("管理员身份核验链接（只读）")).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "核验管理员身份", exact: true }),
+    ).toHaveCount(0);
     for (const prototype of ["wecom-onboarding", "contacts"]) {
       await page.goto(`${origin}/prototypes/${prototype}.html`);
       for (const state of [
@@ -457,6 +687,26 @@ try {
           ),
         );
       }
+      if (prototype === "wecom-onboarding") {
+        for (const state of [
+          "recovery-source",
+          "recovery-expired",
+          "source-expired",
+          "recovery-unknown",
+          "administrator",
+          "copy-failed",
+        ]) {
+          await page.getByLabel("预览状态").selectOption(state);
+          assert(
+            await page.evaluate(
+              () => document.documentElement.scrollWidth <= innerWidth,
+            ),
+          );
+        }
+        await expect(
+          page.getByLabel("管理员身份核验链接（只读）"),
+        ).toHaveAttribute("readonly", "");
+      }
       await page.getByLabel("预览状态").selectOption("ready");
       await page.screenshot({
         path: `/tmp/maia-sage-wecom-ui/${prototype}-prototype.png`,
@@ -465,7 +715,7 @@ try {
     }
     assert.deepEqual(errors, []);
     console.log(
-      `Chrome ${browser.version()} 合成企微页面、原操作恢复、分页、同步未知、权限清理与原型状态通过；不代表真实企微安装或姓名验收`,
+      `Chrome ${browser.version()} 合成企微页面、原操作/结果恢复、跨设备链接与到期清理、分页、同步未知、权限清理与原型状态通过；不代表真实企微安装或姓名验收`,
     );
   }
 } finally {

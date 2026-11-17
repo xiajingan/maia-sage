@@ -6,7 +6,8 @@
 
 - `src/auth/session.ts` 的公开接口 `createSessionController({oidc,api,now?})` 提供 signIn/callback/load/logout/retryLogout/dispose 及带 epoch/signal 校验的 withAccess。组件只提交意图、显示状态，不请求服务。
 - `src/auth/oidc.ts` 使用 oidc-client-ts 的无 UserStore `OidcClient` 完成授权码 + S256 PKCE。响应只返回 controller 的内存，不使用会保存令牌的 UserManager；API仅接受 access token。
-- `src/api/mud.ts` 消费 `maia-mud-client@0.5.0` 生成方法与 Schema。未知响应通过 TypeBox `Check` 校验，不运行 eval/Function，不手写后端 DTO。
+- `src/api/mud.ts` 消费 `maia-mud-client@0.6.0` 生成方法与 Schema。未知响应通过 TypeBox `Check` 校验，不运行 eval/Function，不手写后端 DTO。恢复 source/recovery 与旧安装分别使用所属 Schema，非法恢复响应不按旧类型解释。
+- 当前制品 `vendor/maia-mud-client-0.6.0.tgz` 为 Mud 原包（34938 bytes），SHA256 为 `ac92f682e0d37c5c63d62c50169142c2d0473f9c11df153614829e8602878a51`，SHA512 为 `eba6fa69114e6f9b3dc90c00b101aa253f3ff1f35350fadf66e9f96af72e721fecb22b81af4729526a7968c55de27e427d98a91e732813a70916ad77d93ec004`。`pnpm check:client` 核对两包摘要、0.6.0 的 SHA512 锁完整性及 SDK/Schema 公开导出。只升级 Mud client。
 - 冻结制品 `vendor/maia-mud-client-0.5.0.tgz` 的 SHA256 为 `53c119750398d610c92a6d4df2c6a6bfbde009a7216fa6a6b22dcd9b2e46500f`；`pnpm check:client` 核对制品、锁完整性及公开导出。该本地交付不是 registry 发布或生产签名证明。
 
 ## 协议及隔离

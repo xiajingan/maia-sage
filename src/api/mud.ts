@@ -1,5 +1,15 @@
 import {
   createClient,
+  getWecomInstallRecoverySource,
+  createWecomInstallRecovery,
+  getWecomInstallRecovery,
+  completeWecomInstallRecovery,
+  type GetWecomInstallRecoverySourceResponse,
+  type CreateWecomInstallRecoveryData,
+  type CreateWecomInstallRecoveryResponse,
+  type GetWecomInstallRecoveryResponse,
+  type CompleteWecomInstallRecoveryData,
+  type CompleteWecomInstallRecoveryResponse,
   createNameContext,
   getNameContext,
   completeNameContext,
@@ -43,6 +53,8 @@ import {
   NameContextViewSchema,
   NameComponentConfigSchema,
   InstallViewSchema,
+  InstallRecoveryViewSchema,
+  InstallRecoverySourceViewSchema,
   ChannelInstancesViewSchema,
   ContactPageSchema,
   SyncViewSchema,
@@ -57,6 +69,8 @@ import {
 import { Check } from "typebox/value";
 import type { TSchema } from "typebox";
 import { ApiFailure, LOGOUT_TIMEOUT_MS, type Api } from "../auth/session";
+// Carries only the validated transport distinction needed for legacy route discovery.
+export class MudNotFound extends ApiFailure {}
 const REQUEST_TIMEOUT_MS = 10_000;
 
 function requestSignal(signal: AbortSignal) {
@@ -64,6 +78,29 @@ function requestSignal(signal: AbortSignal) {
 }
 
 export interface WecomApi {
+  getWecomInstallRecoverySource(
+    token: string,
+    id: string,
+    clientRequestId: string | undefined,
+    signal: AbortSignal,
+  ): Promise<GetWecomInstallRecoverySourceResponse>;
+  createWecomInstallRecovery(
+    token: string,
+    id: string,
+    input: CreateWecomInstallRecoveryData["body"],
+    signal: AbortSignal,
+  ): Promise<CreateWecomInstallRecoveryResponse>;
+  getWecomInstallRecovery(
+    token: string,
+    id: string,
+    signal: AbortSignal,
+  ): Promise<GetWecomInstallRecoveryResponse>;
+  completeWecomInstallRecovery(
+    token: string,
+    id: string,
+    input: CompleteWecomInstallRecoveryData["body"],
+    signal: AbortSignal,
+  ): Promise<CompleteWecomInstallRecoveryResponse>;
   createWecomInstallOperation(
     token: string,
     workspaceId: string,
@@ -138,7 +175,13 @@ export function createMudApi(baseUrl: string): Api & WecomApi & NameApi {
   ): T {
     if (!result.response?.ok) {
       const error = result.error;
-      throw new ApiFailure(
+      const Failure =
+        result.response?.status === 404 &&
+        Check(ErrorViewSchema, error) &&
+        error.code === "NOT_FOUND"
+          ? MudNotFound
+          : ApiFailure;
+      throw new Failure(
         result.response?.status ?? 0,
         Check(errorSchema, error) ? error.requestId : undefined,
         Check(ErrorViewSchema, error) ? error.recovery : undefined,
@@ -148,6 +191,61 @@ export function createMudApi(baseUrl: string): Api & WecomApi & NameApi {
     return result.data as T;
   }
   return {
+    async getWecomInstallRecoverySource(token, id, clientRequestId, signal) {
+      return read<GetWecomInstallRecoverySourceResponse>(
+        await getWecomInstallRecoverySource({
+          client,
+          auth: token,
+          path: { id },
+          query: { clientRequestId },
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: requestSignal(signal),
+        }),
+        InstallRecoverySourceViewSchema,
+      );
+    },
+    async createWecomInstallRecovery(token, id, body, signal) {
+      return read<CreateWecomInstallRecoveryResponse>(
+        await createWecomInstallRecovery({
+          client,
+          auth: token,
+          path: { id },
+          body,
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: requestSignal(signal),
+        }),
+        InstallRecoveryViewSchema,
+      );
+    },
+    async getWecomInstallRecovery(token, id, signal) {
+      return read<GetWecomInstallRecoveryResponse>(
+        await getWecomInstallRecovery({
+          client,
+          auth: token,
+          path: { id },
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: requestSignal(signal),
+        }),
+        InstallRecoveryViewSchema,
+      );
+    },
+    async completeWecomInstallRecovery(token, id, body, signal) {
+      return read<CompleteWecomInstallRecoveryResponse>(
+        await completeWecomInstallRecovery({
+          client,
+          auth: token,
+          path: { id },
+          body,
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: requestSignal(signal),
+        }),
+        InstallRecoveryViewSchema,
+      );
+    },
     async createNameContext(token, input, signal) {
       return read<CreateNameContextResponse>(
         await createNameContext({

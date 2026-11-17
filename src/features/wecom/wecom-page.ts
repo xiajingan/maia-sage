@@ -1,14 +1,24 @@
 import { Check } from "typebox/value";
-import { InstallViewSchema } from "maia-mud-client/schemas";
+import {
+  InstallViewSchema,
+  InstallRecoveryInputSchema,
+} from "maia-mud-client/schemas";
 import { shallowReactive, watch } from "vue";
 import type {
   CreateWecomInstallOperationData,
   GetWecomInstallOperationResponse,
+  GetWecomInstallRecoveryResponse,
+  GetWecomInstallRecoverySourceResponse,
+  CreateWecomInstallRecoveryData,
   ListChannelAppInstancesResponse,
 } from "maia-mud-client";
-import type { WecomApi } from "../../api/mud";
+import { MudNotFound, type WecomApi } from "../../api/mud";
 import { ApiFailure, type createSessionController } from "../../auth/session";
 type Session = ReturnType<typeof createSessionController>;
+type Operation =
+  GetWecomInstallOperationResponse | GetWecomInstallRecoveryResponse;
+type RecoveryInput = CreateWecomInstallRecoveryData["body"];
+type RecoveryPending = { sourceId: string; input: RecoveryInput };
 type StartInput = CreateWecomInstallOperationData["body"];
 type StoragePort = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 const STORAGE_KEY = "sage.wecom.install";
@@ -23,13 +33,21 @@ export function createWecomPage({
   api,
   session,
   storage = browserStorage(),
+  writeClipboard = (text: string) => navigator.clipboard.writeText(text),
 }: {
   api: WecomApi;
   session: Session;
   storage?: StoragePort;
+  writeClipboard?: (text: string) => Promise<void>;
 }) {
   const state = shallowReactive<{
-    operation?: GetWecomInstallOperationResponse;
+    operation?: Operation;
+    kind?: "install" | "recovery";
+    source?: GetWecomInstallRecoverySourceResponse;
+    unknownRecovery: boolean;
+    launchExpired: boolean;
+    handoffFallback: boolean;
+    handoffMessage?: string;
     operationId?: string;
     instances?: ListChannelAppInstancesResponse;
     busy: boolean;
@@ -42,15 +60,21 @@ export function createWecomPage({
     mustQuery: boolean;
     instanceCursor?: string;
   }>({
+    unknownRecovery: false,
+    launchExpired: false,
+    handoffFallback: false,
     busy: false,
     listBusy: false,
     forbidden: false,
     unknownStart: false,
     mustQuery: false,
   });
+  let launchTimer: ReturnType<typeof setTimeout> | undefined;
   let abort = new AbortController();
   let disposed = false;
   let pending: StartInput | undefined;
+  let recoveryPending: RecoveryPending | undefined;
+  let createdRecoveryKey: string | undefined;
   let bound = session.state.session;
   let listCursor: string | undefined;
   let missingSavedOperation: string | undefined;
@@ -63,6 +87,17 @@ export function createWecomPage({
           workspaceId: bound?.rootWorkspace.id,
           operationId: state.operationId,
           pending,
+          kind: state.kind,
+          recoveryPending,
+          sourceId:
+            state.operation && "sourceOperationId" in state.operation
+              ? state.operation.sourceOperationId
+              : recoveryPending?.sourceId,
+          sourceRowVersion:
+            state.operation && "sourceRowVersion" in state.operation
+              ? state.operation.sourceRowVersion
+              : recoveryPending?.input.rowVersion,
+          clientRequestId: createdRecoveryKey,
           mustQuery: state.mustQuery,
         }),
       );
@@ -72,9 +107,18 @@ export function createWecomPage({
     }
   }
   function clear() {
+    clearTimeout(launchTimer);
+    state.launchExpired = false;
+    state.handoffFallback = false;
+    state.handoffMessage = undefined;
     abort.abort();
     abort = new AbortController();
     state.operation = undefined;
+    state.source = undefined;
+    state.kind = undefined;
+    state.unknownRecovery = false;
+    recoveryPending = undefined;
+    createdRecoveryKey = undefined;
     state.instances = undefined;
     state.busy = false;
     state.listBusy = false;
@@ -91,11 +135,17 @@ export function createWecomPage({
     pending = undefined;
   }
   const stop = watch(
-    () => session.state.session,
-    () => {
-      clear();
-      bound = session.state.session;
-      state.forbidden = false;
+    () =>
+      [
+        session.state.session,
+        session.state.phase === "authenticating",
+      ] as const,
+    ([current, authenticating]) => {
+      if (authenticating || current !== bound) {
+        clear();
+        bound = current;
+        state.forbidden = false;
+      }
     },
     { flush: "sync" },
   );
@@ -103,6 +153,7 @@ export function createWecomPage({
     return (
       !disposed &&
       !state.forbidden &&
+      session.state.phase !== "authenticating" &&
       Boolean(bound) &&
       bound === session.state.session
     );
@@ -136,12 +187,14 @@ export function createWecomPage({
     request: (
       token: string,
       signal: AbortSignal,
-    ) => Promise<GetWecomInstallOperationResponse>,
+    ) => Promise<Operation | undefined>,
     restoringKnownReference = false,
   ) {
     if (!allowed() || state.busy) return;
     const signal = abort.signal;
     state.busy = true;
+    state.handoffFallback = false;
+    state.handoffMessage = undefined;
     state.message = undefined;
     state.requestId = undefined;
     try {
@@ -150,7 +203,32 @@ export function createWecomPage({
       );
       if (!result || signal.aborted || !allowed()) return;
       missingSavedOperation = undefined;
+      if (state.operationId !== result.operationId && !recoveryPending)
+        createdRecoveryKey = undefined;
+      state.kind = "sourceOperationId" in result ? "recovery" : "install";
       state.operation = result;
+      clearTimeout(launchTimer);
+      state.handoffFallback = false;
+      state.handoffMessage = undefined;
+      state.launchExpired = result.expiresAt <= Date.now();
+      if (!state.launchExpired && result.launch)
+        launchTimer = setTimeout(
+          () => {
+            state.launchExpired = true;
+            state.handoffFallback = false;
+            state.handoffMessage = undefined;
+            if (state.operation === result)
+              state.operation = { ...result, launch: null };
+          },
+          Math.min(result.expiresAt - Date.now(), 2_147_483_647),
+        );
+      if (state.kind === "recovery") {
+        state.source = undefined;
+        if (recoveryPending)
+          createdRecoveryKey = recoveryPending.input.clientRequestId;
+        recoveryPending = undefined;
+        state.unknownRecovery = false;
+      }
       state.operationId = result.operationId;
       pending = undefined;
       state.unknownStart = false;
@@ -191,9 +269,11 @@ export function createWecomPage({
       needsListConfirmation ||
       session.state.session?.membership.role !== "manager" ||
       state.operationId ||
+      recoveryPending ||
       pending
     )
       return;
+    state.kind = "install";
     pending = { mode, clientRequestId: crypto.randomUUID() };
     save();
     await retryStart();
@@ -206,21 +286,204 @@ export function createWecomPage({
       api.createWecomInstallOperation(token, workspaceId, input, signal),
     );
   }
-  async function query() {
-    const id = state.operationId;
-    if (id)
-      await execute((token, signal) =>
-        api.getWecomInstallOperation(token, id, signal),
+  function authorizationUrl() {
+    const op = state.operation;
+    if (
+      !allowed() ||
+      state.launchExpired ||
+      state.mustQuery ||
+      state.unknownRecovery ||
+      op?.nextAction !== "authorize" ||
+      !op.launch ||
+      op.expiresAt <= Date.now()
+    )
+      return;
+    try {
+      const url = new URL(op.launch.url);
+      return url.protocol === "https:" ? op.launch.url : undefined;
+    } catch {
+      return;
+    }
+  }
+  async function copyIdentityLink() {
+    const op = state.operation;
+    const url = authorizationUrl();
+    if (
+      !url ||
+      op?.launch?.kind !== "member" ||
+      !(
+        state.kind === "recovery" ||
+        op.safeReason === "administrator_identity_required"
+      )
+    )
+      return;
+    try {
+      await writeClipboard(url);
+      if (state.operation === op && authorizationUrl() === url) {
+        state.handoffFallback = false;
+        state.handoffMessage = "链接已复制，请在手机企业微信内打开。";
+      }
+    } catch {
+      if (state.operation === op && authorizationUrl() === url) {
+        state.handoffFallback = true;
+        state.handoffMessage = "复制失败，请选择下方只读链接手工复制。";
+      }
+    }
+  }
+  async function readOperation(
+    token: string,
+    id: string,
+    signal: AbortSignal,
+  ): Promise<Operation | undefined> {
+    let result: Operation;
+    if (state.kind === "recovery")
+      result = await api.getWecomInstallRecovery(token, id, signal);
+    else if (state.kind === "install")
+      result = await api.getWecomInstallOperation(token, id, signal);
+    else {
+      try {
+        result = await api.getWecomInstallRecovery(token, id, signal);
+      } catch (error) {
+        if (!(error instanceof MudNotFound)) throw error;
+        const legacy = await session.withAccess(signal, (freshToken) =>
+          api.getWecomInstallOperation(freshToken, id, signal),
+        );
+        if (!legacy) return;
+        result = legacy;
+      }
+    }
+    if (signal.aborted || !allowed()) return result;
+    if (!("sourceOperationId" in result) && result.phase === "expired") {
+      const sourceId = result.operationId;
+      const source = await session.withAccess(signal, (freshToken) =>
+        api.getWecomInstallRecoverySource(
+          freshToken,
+          sourceId,
+          undefined,
+          signal,
+        ),
       );
+      if (!source) return;
+      if (!signal.aborted && allowed()) state.source = source;
+      if (source.recovery && !recoveryPending) return source.recovery;
+    } else state.source = undefined;
+    return result;
+  }
+  async function recover() {
+    if (
+      !allowed() ||
+      state.busy ||
+      recoveryPending ||
+      state.mustQuery ||
+      bound?.membership.role !== "manager"
+    )
+      return;
+    const op = state.operation;
+    if (!op) return;
+    const sourceId =
+      "sourceOperationId" in op
+        ? op.sourceOperationId
+        : state.source?.sourceOperationId;
+    if (
+      !sourceId ||
+      !(op.nextAction === "recover" || state.source?.nextAction === "recover")
+    )
+      return;
+    const rowVersion =
+      "sourceOperationId" in op
+        ? op.sourceRowVersion
+        : state.source!.rowVersion;
+    createdRecoveryKey = undefined;
+    recoveryPending = {
+      sourceId,
+      input: { rowVersion, clientRequestId: crypto.randomUUID() },
+    };
+    state.unknownRecovery = true;
+    if (!save()) {
+      state.message = "无法保存核验请求，请恢复浏览器存储后重试。";
+      recoveryPending = undefined;
+      state.unknownRecovery = false;
+      return;
+    }
+    await submitRecovery();
+  }
+  async function submitRecovery() {
+    const original = recoveryPending;
+    if (!original) return;
+    await execute(async (token, signal) => {
+      try {
+        return await api.createWecomInstallRecovery(
+          token,
+          original.sourceId,
+          original.input,
+          signal,
+        );
+      } catch (error) {
+        if (!(error instanceof ApiFailure && error.status === 409)) throw error;
+        // A conflicting key never becomes an alias for another round.
+        if (signal.aborted || !allowed()) throw error;
+        recoveryPending = undefined;
+        createdRecoveryKey = undefined;
+        state.unknownRecovery = false;
+        save();
+        const source = await session.withAccess(signal, (freshToken) =>
+          api.getWecomInstallRecoverySource(
+            freshToken,
+            original.sourceId,
+            undefined,
+            signal,
+          ),
+        );
+        if (!source) return;
+        if (!signal.aborted && allowed()) state.source = source;
+        if (source.recovery) return source.recovery;
+        return state.operation!;
+      }
+    });
+  }
+  async function retryRecovery(allowRetry = true) {
+    const original = recoveryPending;
+    if (!original || state.busy || !allowed()) return;
+    let notCreated = false;
+    await execute(async (token, signal) => {
+      const source = await api.getWecomInstallRecoverySource(
+        token,
+        original.sourceId,
+        original.input.clientRequestId,
+        signal,
+      );
+      if (source.recovery) return source.recovery;
+      notCreated = true;
+      return undefined;
+    });
+    if (allowRetry && notCreated && allowed() && recoveryPending === original) {
+      state.unknownRecovery = true;
+      // Only this explicit retry may resend the exact original body/key.
+      await submitRecovery();
+    }
+  }
+  async function query() {
+    if (recoveryPending) {
+      await retryRecovery(false);
+      return;
+    }
+    const id = state.operationId;
+    if (id) await execute((token, signal) => readOperation(token, id, signal));
   }
   async function resume(id?: string) {
     if (disposed || !bound || bound !== session.state.session) return;
     if (!id) {
       // A list navigation cancels the old view, but never discards unknown writes.
       const originalPending = pending;
-      const originalOperation = state.mustQuery ? state.operationId : undefined;
+      const originalRecovery = recoveryPending;
+      const originalKind = state.kind;
+      const originalOperation =
+        state.mustQuery || originalRecovery ? state.operationId : undefined;
       clear();
       pending = originalPending;
+      recoveryPending = originalRecovery;
+      state.kind = originalKind;
+      state.unknownRecovery = Boolean(originalRecovery);
       state.unknownStart = Boolean(pending);
       state.operationId = originalOperation;
       state.mustQuery = Boolean(originalOperation);
@@ -242,6 +505,42 @@ export function createWecomPage({
         "workspaceId" in saved &&
         saved.workspaceId === bound.rootWorkspace.id
       ) {
+        const matchingRoute =
+          !id || ("operationId" in saved && id === saved.operationId);
+        if (
+          matchingRoute &&
+          "kind" in saved &&
+          ["install", "recovery"].includes(String(saved.kind))
+        )
+          state.kind = saved.kind as "install" | "recovery";
+        if (
+          matchingRoute &&
+          state.kind === "recovery" &&
+          "clientRequestId" in saved &&
+          typeof saved.clientRequestId === "string" &&
+          saved.clientRequestId.length > 0 &&
+          saved.clientRequestId.length <= 128
+        )
+          createdRecoveryKey = saved.clientRequestId;
+        if (
+          matchingRoute &&
+          "recoveryPending" in saved &&
+          saved.recoveryPending &&
+          typeof saved.recoveryPending === "object" &&
+          "sourceId" in saved.recoveryPending &&
+          Check(
+            InstallViewSchema.properties.operationId,
+            saved.recoveryPending.sourceId,
+          ) &&
+          "input" in saved.recoveryPending &&
+          Check(InstallRecoveryInputSchema, saved.recoveryPending.input)
+        ) {
+          recoveryPending = {
+            sourceId: saved.recoveryPending.sourceId as string,
+            input: saved.recoveryPending.input as RecoveryInput,
+          };
+          state.unknownRecovery = true;
+        }
         if (
           "operationId" in saved &&
           typeof saved.operationId === "string" &&
@@ -284,8 +583,7 @@ export function createWecomPage({
     const operationId = state.operationId;
     if (operationId)
       await execute(
-        (token, signal) =>
-          api.getWecomInstallOperation(token, operationId, signal),
+        (token, signal) => readOperation(token, operationId, signal),
         restoringKnownReference,
       );
   }
@@ -296,21 +594,23 @@ export function createWecomPage({
       // Persist uncertainty before dispatch; failed storage must not leave a stale false marker.
       state.mustQuery = true;
       if (!save()) throw new Error("无法保存原操作核对标记");
-      return api.completeWecomInstallOperation(
-        token,
-        op.operationId,
-        { rowVersion: op.rowVersion },
-        signal,
-      );
+      return (
+        state.kind === "recovery"
+          ? api.completeWecomInstallRecovery
+          : api.completeWecomInstallOperation
+      )(token, op.operationId, { rowVersion: op.rowVersion }, signal);
     });
   }
   function newOperation() {
     if (
+      recoveryPending ||
+      state.mustQuery ||
+      state.source?.nextAction === "recover" ||
       !["start_new"].includes(state.operation?.nextAction ?? "") ||
       state.busy
     )
       return;
-    state.operation = undefined;
+    clear();
     state.operationId = undefined;
     pending = undefined;
     state.message = undefined;
@@ -369,6 +669,10 @@ export function createWecomPage({
     state,
     start,
     retryStart,
+    recover,
+    authorizationUrl,
+    copyIdentityLink,
+    retryRecovery,
     resume,
     query,
     complete,

@@ -52,26 +52,35 @@ const reason = computed(() => {
       return "原实例已恢复绑定，授权范围仍需重新核对。";
     case "exchange_result_unknown":
       return "外部授权结果尚未核实，请查询原操作。";
+    case "recovery_source_expired":
+    case "recovery_source_unavailable":
+      return "已保存结果已不可核验，请重新取得可信授权。";
     default:
+      if (
+        state.source?.safeReason === "recovery_source_expired" ||
+        state.source?.safeReason === "recovery_source_unavailable"
+      )
+        return "已保存结果已不可核验，请重新取得可信授权。";
       return state.operation?.safeReason
         ? "本次接入尚有条件需要核对，请按当前允许的下一步继续。"
         : undefined;
   }
 });
-const launchUrl = computed(() => {
-  if (
-    state.mustQuery ||
-    state.operation?.nextAction !== "authorize" ||
-    !state.operation.launch
-  )
-    return;
-  try {
-    const url = new globalThis.URL(state.operation.launch.url);
-    return url.protocol === "https:" ? url.href : undefined;
-  } catch {
-    return undefined;
-  }
-});
+const launchUrl = computed(page.authorizationUrl);
+const memberLaunch = computed(
+  () =>
+    launchUrl.value &&
+    state.operation?.launch?.kind === "member" &&
+    (state.kind === "recovery" ||
+      state.operation.safeReason === "administrator_identity_required"),
+);
+const canRecover = computed(
+  () =>
+    !state.mustQuery &&
+    !state.unknownRecovery &&
+    (state.operation?.nextAction === "recover" ||
+      state.source?.nextAction === "recover"),
+);
 watch(
   () => state.operation?.operationId,
   (id) => {
@@ -157,6 +166,14 @@ onBeforeUnmount(page.dispose);
             可信安装绑定已完成。联系人覆盖、存档开通与终端接入需分别核对。
           </p>
           <div class="terminal-actions">
+            <button
+              v-if="memberLaunch"
+              class="primary"
+              :disabled="state.busy"
+              @click="page.copyIdentityLink()"
+            >
+              复制管理员身份核验链接
+            </button>
             <a
               v-if="launchUrl"
               :href="launchUrl"
@@ -188,7 +205,30 @@ onBeforeUnmount(page.dispose);
               核对并完成接入
             </button>
             <button
-              v-if="state.operation.nextAction === 'start_new'"
+              v-if="canRecover"
+              class="primary"
+              :disabled="state.busy"
+              @click="page.recover()"
+            >
+              {{
+                state.kind === "recovery"
+                  ? "重新核验管理员身份"
+                  : "使用已保存结果重新核验管理员身份"
+              }}
+            </button>
+            <button
+              v-if="state.unknownRecovery"
+              :disabled="state.busy"
+              @click="page.retryRecovery()"
+            >
+              核对原核验请求
+            </button>
+            <button
+              v-if="
+                state.operation.nextAction === 'start_new' &&
+                  !canRecover &&
+                  !state.unknownRecovery
+              "
               :disabled="state.busy"
               @click="page.newOperation()"
             >
@@ -203,15 +243,60 @@ onBeforeUnmount(page.dispose);
             </button>
           </div>
           <p
-            v-if="launchUrl"
+            v-if="state.unknownRecovery"
+            class="muted"
+          >
+            查询只核对原请求；选择“核对原核验请求”时，未找到结果才重试相同请求，不会重新安装。
+          </p>
+          <p
+            v-if="state.launchExpired && state.kind === 'recovery'"
+            class="muted"
+          >
+            本轮身份核验已过期，请查询原操作后按当前允许的入口重新核验。
+          </p>
+          <p
+            v-if="canRecover"
+            class="muted"
+          >
+            只重新核验管理员身份，不会重新安装。
+          </p>
+          <template v-if="memberLaunch">
+            <p class="muted">
+              保留此电脑页面与当前 Maia
+              登录；把此链接交给本次企业管理员，在手机企业微信内打开完成身份核验，无需在手机登录
+              Maia。完成后回到此电脑查询原操作。
+            </p>
+            <p
+              v-if="state.handoffMessage"
+              role="status"
+            >
+              {{ state.handoffMessage }}
+            </p>
+            <label v-if="state.handoffFallback">管理员身份核验链接（只读）<input
+              :value="launchUrl"
+              readonly
+              @focus="($event.target as HTMLInputElement).select()"
+            ></label>
+          </template>
+          <p
+            v-else-if="launchUrl"
             class="muted"
           >
             在新窗口完成企微授权后，回到此页查询原操作。刷新此页不会再次提交安装邀请。
           </p>
         </template>
         <template v-else-if="state.operationId">
-          <p>原操作 {{ state.operationId }} 的当前结果尚未读取，请核对原操作。</p>
+          <p>
+            原操作 {{ state.operationId }} 的当前结果尚未读取，请核对原操作。
+          </p>
           <div>
+            <button
+              v-if="state.unknownRecovery"
+              :disabled="state.busy"
+              @click="page.retryRecovery()"
+            >
+              核对原核验请求
+            </button>
             <button
               :disabled="state.busy"
               @click="page.query()"
@@ -238,12 +323,16 @@ onBeforeUnmount(page.dispose);
           <div class="terminal-actions">
             <button
               class="primary"
-              :disabled="state.busy || state.listBusy || Boolean(state.listError)"
+              :disabled="
+                state.busy || state.listBusy || Boolean(state.listError)
+              "
               @click="page.start('member')"
             >
               成员扫码接入
             </button><button
-              :disabled="state.busy || state.listBusy || Boolean(state.listError)"
+              :disabled="
+                state.busy || state.listBusy || Boolean(state.listError)
+              "
               @click="page.start('admin')"
             >
               管理员接入
@@ -368,7 +457,9 @@ onBeforeUnmount(page.dispose);
         <button
           v-if="state.instances?.nextCursor"
           :disabled="state.listBusy"
-          @click="page.refreshInstances(state.instances.nextCursor ?? undefined)"
+          @click="
+            page.refreshInstances(state.instances.nextCursor ?? undefined)
+          "
         >
           下一页实例
         </button><button

@@ -33,16 +33,16 @@ function navigate(target: string) {
   if (typeof globalThis.history !== "undefined")
     globalThis.history.pushState(null, "", target);
 }
-function normalizeContactUrl() {
+function normalizeBusinessUrl() {
   if (
-    contactsRoute.value &&
+    (contactsRoute.value || installRoute.value) &&
     (globalThis.location.search || globalThis.location.hash)
   )
     globalThis.history.replaceState(null, "", globalThis.location.pathname);
 }
 function onPopState() {
   path.value = globalThis.location.pathname;
-  normalizeContactUrl();
+  normalizeBusinessUrl();
 }
 function focusMain() {
   globalThis.document.getElementById("main")?.focus();
@@ -50,7 +50,7 @@ function focusMain() {
 if (typeof globalThis.window !== "undefined") {
   globalThis.window.addEventListener("popstate", onPopState);
   globalThis.window.addEventListener("hashchange", onPopState);
-  normalizeContactUrl();
+  normalizeBusinessUrl();
 }
 onBeforeUnmount(() => {
   if (typeof globalThis.window !== "undefined")
