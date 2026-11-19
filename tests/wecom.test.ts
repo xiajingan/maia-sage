@@ -79,6 +79,106 @@ test("result_reload_not_invite", async () => {
   expect(requests.filter((r) => r.method === "POST")).toHaveLength(1);
   reloaded.dispose();
 });
+
+const pendingSubscribe: typeof install = {
+  ...install,
+  nextAction: "complete",
+  safeReason: "authorization_invalidation_pending",
+  rowVersion: "2",
+};
+
+test("pending_subscribe_reload_completes_same_operation", async () => {
+  const storage = memoryStorage();
+  let current = pendingSubscribe;
+  const { api, session, requests } = await harness((request) =>
+    Response.json(
+      new URL(request.url).pathname.endsWith("/complete") &&
+        current.rowVersion === "3"
+        ? {
+            ...current,
+            phase: "completed",
+            nextAction: "none",
+            instanceId: "20",
+            rowVersion: "4",
+          }
+        : current,
+    ),
+  );
+  let page = createWecomPage({ api, session, storage });
+  await page.start("admin");
+  await page.complete();
+  expect(page.state.operation).toEqual(pendingSubscribe);
+  page.dispose();
+
+  page = createWecomPage({ api, session, storage });
+  await page.resume("10");
+  expect(page.state.operation).toEqual(pendingSubscribe);
+  current = { ...pendingSubscribe, safeReason: null, rowVersion: "3" };
+  await page.query();
+  expect(page.state.operation?.rowVersion).toBe("3");
+  expect(requests.filter((r) => r.method === "POST")).toHaveLength(2);
+
+  await page.complete();
+  expect(page.state.operation).toMatchObject({
+    operationId: "10",
+    phase: "completed",
+    instanceId: "20",
+    rowVersion: "4",
+  });
+  const posts = requests.filter((r) => r.method === "POST");
+  expect(posts.map((r) => new URL(r.url).pathname)).toEqual([
+    "/api/mud/v1/workspaces/1/wecom/install-operations",
+    "/api/mud/v1/wecom/install-operations/10/complete",
+    "/api/mud/v1/wecom/install-operations/10/complete",
+  ]);
+  expect(await posts[1]!.json()).toEqual({ rowVersion: "2" });
+  expect(await posts[2]!.json()).toEqual({ rowVersion: "3" });
+  expect(
+    requests
+      .filter((r) => r.method === "GET")
+      .map((r) => new URL(r.url).pathname),
+  ).toEqual([
+    "/api/mud/v1/wecom/install-operations/10",
+    "/api/mud/v1/wecom/install-operations/10",
+  ]);
+  page.dispose();
+});
+
+test("hard_invalidation_while_waiting_blocks", async () => {
+  const restricted = {
+    ...pendingSubscribe,
+    phase: "restricted",
+    nextAction: "start_new",
+    safeReason: "operation_authorization_invalidated",
+    rowVersion: "3",
+  };
+  let hardInvalidation = false;
+  const { api, session, requests } = await harness(() =>
+    Response.json(hardInvalidation ? restricted : pendingSubscribe),
+  );
+  const storage = memoryStorage();
+  let page = createWecomPage({ api, session, storage });
+  await page.start("admin");
+  await page.complete();
+  expect(page.state.operation).toEqual(pendingSubscribe);
+  hardInvalidation = true;
+  await page.complete();
+  expect(page.state.operation).toEqual(restricted);
+  page.dispose();
+
+  page = createWecomPage({ api, session, storage });
+  await page.resume("10");
+  expect(page.state.operation).toEqual(restricted);
+  await page.complete();
+  await page.recover();
+  expect(requests.map((r) => [r.method, new URL(r.url).pathname])).toEqual([
+    ["POST", "/api/mud/v1/workspaces/1/wecom/install-operations"],
+    ["POST", "/api/mud/v1/wecom/install-operations/10/complete"],
+    ["POST", "/api/mud/v1/wecom/install-operations/10/complete"],
+    ["GET", "/api/mud/v1/wecom/install-operations/10"],
+  ]);
+  page.dispose();
+});
 // TC-SAGE-003
 test("unknown create explicitly rechecks the same idempotent request; complete unknown only queries", async () => {
   let unavailable = true;

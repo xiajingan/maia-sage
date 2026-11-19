@@ -93,9 +93,19 @@ try {
       url: "https://synthetic.example/recovery-identity",
     },
   };
+  const hardOperation = {
+    ...operation,
+    operationId: "13",
+    phase: "awaiting_verification",
+    nextAction: "complete",
+    safeReason: "authorization_invalidation_pending",
+    launch: null,
+    rowVersion: "5",
+  };
   let recoveryPosts = 0,
     sourceUnavailable = false;
   const recoveryKeys = [];
+  const completeBodies = [];
   const nextRecovery = { ...recovery, operationId: "12" };
   let lostRoundKey;
   const recoveryRoundReads = [];
@@ -237,7 +247,10 @@ try {
       installPosts++;
       return route.fulfill({ json: operation });
     }
-    if (path.endsWith("/install-operations/10/complete"))
+    if (path.endsWith("/install-operations/10/complete")) {
+      completeBodies.push(req.postDataJSON());
+      if (mode === "subscribe-pending")
+        return route.fulfill({ json: operation });
       return route.fulfill({
         json: {
           ...operation,
@@ -245,9 +258,22 @@ try {
           nextAction: "none",
           instanceId: "20",
           launch: null,
-          rowVersion: "3",
+          rowVersion: "4",
         },
       });
+    }
+    if (path.endsWith("/install-operations/13/complete")) {
+      completeBodies.push(req.postDataJSON());
+      Object.assign(hardOperation, {
+        phase: "restricted",
+        nextAction: "start_new",
+        safeReason: "operation_authorization_invalidated",
+        rowVersion: "6",
+      });
+      return route.fulfill({ json: hardOperation });
+    }
+    if (path.endsWith("/install-operations/13"))
+      return route.fulfill({ json: hardOperation });
     if (path.endsWith("/install-operations/10")) {
       queryReads++;
       return mode === "operation-missing"
@@ -341,19 +367,40 @@ try {
     ).toHaveCount(0);
     Object.assign(operation, {
       nextAction: "complete",
-      safeReason: null,
+      safeReason: "authorization_invalidation_pending",
       rowVersion: "2",
     });
+    mode = "subscribe-pending";
+    await button("查询原操作").click();
+    await button("核对并完成接入").click();
+    await expect(button("核对并完成接入")).toBeEnabled();
+    await expect(
+      page.getByRole("heading", { name: "接入待核对" }),
+    ).toBeVisible();
+    await page.reload();
+    await expect(button("核对并完成接入")).toBeEnabled();
+    await expect(page).toHaveURL(
+      `${origin}/workspaces/1/wecom/install-operations/10`,
+    );
+    assert.deepEqual(completeBodies, [{ rowVersion: "2" }]);
+    assert.equal(installPosts, 1);
+    assert.equal(recoveryPosts, 0);
+    Object.assign(operation, { safeReason: null, rowVersion: "3" });
+    mode = "ready";
     await button("查询原操作").click();
     await button("核对并完成接入").click();
     await expect(
       page.getByText("可信绑定已完成", { exact: true }),
     ).toBeVisible();
+    assert.deepEqual(completeBodies, [
+      { rowVersion: "2" },
+      { rowVersion: "3" },
+    ]);
     Object.assign(operation, {
       phase: "completed",
       nextAction: "none",
       instanceId: "20",
-      rowVersion: "3",
+      rowVersion: "4",
     });
     mode = "operation-error";
     await page.reload();
@@ -370,6 +417,21 @@ try {
       JSON.stringify({ ...sessionStorage }),
     );
     assert(!/synthetic\.example|browser-fixture|Bearer/.test(storage));
+    await page.goto(`${origin}/workspaces/1/wecom/install-operations/13`);
+    await expect(button("核对并完成接入")).toBeEnabled();
+    await button("核对并完成接入").click();
+    await expect(page.getByRole("heading", { name: "接入受限" })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "接入受限" })).toBeVisible();
+    await expect(button("核对并完成接入")).toHaveCount(0);
+    await expect(button("使用已保存结果重新核验管理员身份")).toHaveCount(0);
+    assert.deepEqual(completeBodies, [
+      { rowVersion: "2" },
+      { rowVersion: "3" },
+      { rowVersion: "5" },
+    ]);
+    assert.equal(installPosts, 1);
+    assert.equal(recoveryPosts, 0);
     // Recovery uses only synthetic responses on the existing public adapter.
     Object.assign(operation, {
       phase: "expired",
@@ -377,7 +439,7 @@ try {
       instanceId: null,
       launch: null,
     });
-    await button("查询原操作").click();
+    await page.goto(`${origin}/workspaces/1/wecom/install-operations/10`);
     await expect(button("使用已保存结果重新核验管理员身份")).toBeVisible();
     await expect(
       page.getByText("只重新核验管理员身份，不会重新安装。", { exact: true }),

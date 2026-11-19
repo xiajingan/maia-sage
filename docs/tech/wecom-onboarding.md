@@ -20,6 +20,8 @@
 
 原 admin 安装入口由用户在新窗口打开，保留原 Maia 会话；member 管理员核验同时提供下述手机传递入口。回到原窗口后查询原操作，只有服务端 nextAction 为 complete 时允许提交所见 rowVersion。窗口不开启自动重试、循环授权或原始 code 传递。页面不读取返回页 code，也不通过 postMessage 接收凭据。结果未知时保留原操作并先查询，完成请求未知后在取得新查询结果前关闭完成按钮。
 
+管理员首装遇到可核验的关注通知尚未处理完，服务端返回原操作的 `awaiting_verification`、`authorization_invalidation_pending` 和 `nextAction=complete`。刷新和查询仍读取同一 operationId，用户可在原期限内显式提交最新 rowVersion。若再次核对返回 `operation_authorization_invalidated`，原页显示接入受限，完成入口随服务端动作关闭。这里沿用原结果页及原 API，刷新只发起查询，恢复仍取决于独立的已保存结果资格。
+
 create 尚未返回 operationId 时，页面保留原 clientRequestId 和 mode，由用户明确「核对原发起请求」重复同内容的幂等请求，不生成新 key。已取得 operationId 后只查询原 ID，不重放一次性邀请。已读取的原操作只有服务端允许 start_new 后才可由用户明确重新发起；正常列表对已确认不可读的普通恢复引用另按下述边界处理。
 
 sessionStorage 的 `sage.wecom.install` 既有安装分支保存 workspaceId、operationId、kind、非秘密布尔 mustQuery，或尚无结果的原幂等输入；恢复字段见下节。它不存 Bearer、code、launch URL、成员资料或权限。恢复引用只用来查询，归属与 sid 仍由服务端校验。存储不可用时，当前内存查询与已知稳定 operationId 查询仍可使用；complete 必须先成功持久化 mustQuery=true 才能发送，保存失败则停止提交，避免遗留的 false 标记掩盖未知结果。短token恢复在dispatch前挡住complete时，不写已发送标记。成功查询/完成只依据服务端 nextAction 更新标记，query_original 仍保持待核对；缺少该字段的旧格式引用保守视为待核对，须先成功读取才能解除。
