@@ -17,8 +17,16 @@ const props = defineProps<{
   workspaceId: string;
   instanceId: string;
 }>();
-const { state, select, refresh, requestSync, retrySync, querySync, dispose } =
-  createContactPage({ api: props.api, session: props.session });
+const {
+  state,
+  select,
+  refresh,
+  canRequestSync,
+  requestSync,
+  retrySync,
+  querySync,
+  dispose,
+} = createContactPage({ api: props.api, session: props.session });
 const names =
   props.wecomNamesEnabled &&
   props.api.createNameContext &&
@@ -453,11 +461,7 @@ onBeforeUnmount(dispose);
         联系人同步
       </h2>
       <button
-        v-if="
-          session.state.session?.membership.role === 'manager' &&
-            state.page?.accessState === 'active' &&
-            !state.unknownSync
-        "
+        v-if="canRequestSync() && !state.unknownSync"
         :disabled="
           state.syncing ||
             state.loading ||

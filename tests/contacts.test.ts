@@ -114,6 +114,43 @@ test("pending access cannot submit sync and is not an empty complete directory",
   page.dispose();
 });
 // TC-SAGE-003
+test.each([
+  ["pending_verification", "provider_invalid_response", "failed", true],
+  ["pending_verification", "provider_invalid_response", "running", false],
+  ["pending_verification", "authorization_revoked", "failed", false],
+  ["disabled", "provider_invalid_response", "failed", false],
+] as const)(
+  "a manager's retry respects contact access %s, reason %s and sync phase %s",
+  async (accessState, safeReason, phase, retryAllowed) => {
+    const oldSync = {
+      ...contacts.sync,
+      phase,
+      coverage: "pending",
+      safeReason: "provider_invalid_response",
+    };
+    const newSync = {
+      ...oldSync,
+      syncId: "41",
+      phase: "planned",
+      safeReason: null,
+    };
+    const { api, session, requests } = await harness((request) =>
+      request.method === "POST"
+        ? Response.json(newSync)
+        : Response.json({ ...contacts, accessState, safeReason, sync: oldSync }),
+    );
+    const page = createContactPage({ api, session });
+    await page.select("1", "20");
+    await page.requestSync();
+    expect(requests.filter((r) => r.method === "POST")).toHaveLength(
+      retryAllowed ? 1 : 0,
+    );
+    expect(page.state.sync).toEqual(retryAllowed ? newSync : oldSync);
+    expect(page.state.page?.items).toEqual([]);
+    page.dispose();
+  },
+);
+// TC-SAGE-003
 test("a late old unauthorized response cannot clear a new session", async () => {
   let finish!: (response: Response) => void;
   const { api, session } = await harness(

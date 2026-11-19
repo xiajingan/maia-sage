@@ -148,14 +148,22 @@ export function createContactPage({
       state.loading = false;
     }
   }
-  async function requestSync() {
+  function canRequestSync() {
     if (
       !allowed() ||
-      state.syncing ||
-      session.state.session?.membership.role !== "manager" ||
-      state.page?.accessState !== "active"
+      session.state.session?.membership.role !== "manager"
     )
-      return;
+      return false;
+    return (
+      state.page?.accessState === "active" ||
+      (state.page?.accessState === "pending_verification" &&
+        state.page.safeReason === "provider_invalid_response" &&
+        state.sync?.phase === "failed" &&
+        state.sync.safeReason === "provider_invalid_response")
+    );
+  }
+  async function requestSync() {
+    if (state.syncing || !canRequestSync()) return;
     if (!pending)
       pending = {
         input: { clientRequestId: crypto.randomUUID() },
@@ -231,6 +239,15 @@ export function createContactPage({
     clear();
     stop();
   }
-  return { state, select, refresh, requestSync, retrySync, querySync, dispose };
+  return {
+    state,
+    select,
+    refresh,
+    canRequestSync,
+    requestSync,
+    retrySync,
+    querySync,
+    dispose,
+  };
 }
 export type ContactPageController = ReturnType<typeof createContactPage>;
