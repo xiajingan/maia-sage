@@ -87,6 +87,7 @@ const pendingSubscribe: typeof install = {
   rowVersion: "2",
 };
 
+// TC-SAGE-003
 test("pending_subscribe_reload_completes_same_operation", async () => {
   const storage = memoryStorage();
   let current = pendingSubscribe;
@@ -144,6 +145,7 @@ test("pending_subscribe_reload_completes_same_operation", async () => {
   page.dispose();
 });
 
+// TC-SAGE-003
 test("hard_invalidation_while_waiting_blocks", async () => {
   const restricted = {
     ...pendingSubscribe,
