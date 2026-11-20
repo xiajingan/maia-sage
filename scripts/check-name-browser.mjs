@@ -101,7 +101,8 @@ try {
   let mode = "ready",
     queries = 0,
     creates = 0,
-    sdkGate;
+    sdkGate,
+    renewalGate;
   const operation = () => ({
     operationId: "50",
     instanceId: "20",
@@ -164,7 +165,7 @@ try {
           window.WWOpenData = {
             checkSession(input) {
               window.__syntheticStages.push('checkSession');
-              if (browserSession.corporation === window.__syntheticCorp && browserSession.expiresAt > Date.now()) input.success();
+              if (!window.__syntheticSessionEnded && browserSession.corporation === window.__syntheticCorp && browserSession.expiresAt > Date.now()) input.success();
               else input.fail();
             },
             bind(el) {
@@ -295,6 +296,7 @@ try {
       const bound = url.pathname.endsWith("/bound-name-component-config");
       if (bound) {
         boundConfigRequests++;
+        if (renewalGate) await renewalGate;
         if (mode === "bound-denied")
           return route.fulfill({
             status: 403,
@@ -317,7 +319,9 @@ try {
         pageUrl: origin + path,
         environment: "web",
         scopeVersion: "1",
-        expiresAt: Date.now() + (mode === "expires" ? 1200 : 60000),
+        expiresAt:
+          Date.now() +
+          (mode === "expires" || mode === "bound-renewing" ? 1800 : 60000),
         corpId: "synthetic-corp",
         agentId: "100",
         nonceStr: "synthetic",
@@ -585,6 +589,99 @@ try {
   assert.equal(creates, manualCreates);
   await returning.close();
   assert.equal(boundConfigRequests, 5);
+  // A single PC document must renew a scoped configuration and recheck WeCom each time.
+  mode = "bound-renewing";
+  const recurring = await context.newPage();
+  let documents = 0;
+  recurring.on("request", (request) => {
+    if (
+      request.resourceType() === "document" &&
+      request.frame() === recurring.mainFrame()
+    )
+      documents++;
+  });
+  await recurring.goto(origin + path);
+  await expect
+    .poll(
+      () =>
+        recurring.evaluate(
+          () =>
+            globalThis.__syntheticStages?.filter((stage) => stage === "bind")
+              .length,
+        ),
+      { timeout: 7000 },
+    )
+    .toBeGreaterThanOrEqual(6);
+  for (const name of ["合成成员甲", "合成成员乙"])
+    await expect(
+      recurring.getByRole("cell", { name, exact: true }),
+    ).toBeVisible();
+  assert.equal(documents, 1);
+  mode = "bound-denied";
+  await expect(recurring.getByText("请核对当前浏览器的企微企业")).toBeVisible();
+  await expect(recurring.locator("ww-open-data")).toHaveCount(0);
+  const stoppedAt = boundConfigRequests;
+  await new Promise((resolve) => globalThis.setTimeout(resolve, 2000));
+  assert.equal(
+    boundConfigRequests,
+    stoppedAt,
+    "A rejected renewal must not retry",
+  );
+  await recurring.close();
+
+  mode = "bound-renewing";
+  const slow = await context.newPage();
+  await slow.goto(origin + path);
+  await expect(slow.locator("ww-open-data")).toHaveCount(2);
+  let release;
+  renewalGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const firstPageRequests = boundConfigRequests;
+  await expect.poll(() => boundConfigRequests).toBe(firstPageRequests + 1);
+  await expect(slow.locator("ww-open-data")).toHaveCount(0);
+  renewalGate = undefined;
+  release();
+  await expect(
+    slow.getByRole("cell", { name: "合成成员乙", exact: true }),
+  ).toBeVisible();
+
+  // A page reread invalidates the earlier request, even if its response arrives late.
+  renewalGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  await expect.poll(() => boundConfigRequests).toBe(firstPageRequests + 2);
+  mode = "empty";
+  await slow.getByRole("button", { name: "刷新联系人" }).click();
+  await expect(
+    slow.getByText("当前页暂无可展示的联系人", { exact: false }),
+  ).toBeVisible();
+  renewalGate = undefined;
+  release();
+  await slow.evaluate(
+    () =>
+      new Promise((resolve) =>
+        globalThis.requestAnimationFrame(() =>
+          globalThis.requestAnimationFrame(resolve),
+        ),
+      ),
+  );
+  await expect(slow.locator("ww-open-data")).toHaveCount(0);
+  await slow.close();
+
+  mode = "bound-renewing";
+  const ended = await context.newPage();
+  await ended.goto(origin + path);
+  await expect(ended.locator("ww-open-data")).toHaveCount(2);
+  await ended.evaluate(() => {
+    globalThis.__syntheticSessionEnded = true;
+  });
+  await expect(
+    ended.getByText("当前浏览器的企微姓名展示会话未通过核验。"),
+  ).toBeVisible();
+  await expect(ended.locator("ww-open-data")).toHaveCount(0);
+  assert.equal(creates, manualCreates);
+  await ended.close();
   // Another browser context has no original Maia in-memory bearer or popup source.
   const isolated = await browser.newContext({ ignoreHTTPSErrors: true });
   const detached = await isolated.newPage();
@@ -631,7 +728,7 @@ try {
       cookieRequests,
       boundConfigRequests,
       cases:
-        "popup close/reopen/source replacement, source/origin, no-code result, init-before-mount, error/update, scope/revocation, wrong corporation, expiry, missing loginSuite, empty/mobile, isolated browser",
+        "popup close/reopen/source replacement, source/origin, no-code result, init-before-mount, error/update, scope/revocation, wrong corporation, expiry, missing loginSuite, empty/mobile, isolated browser, repeated bound renewal, expiry during pending renewal, cancellation, denied renewal and PC session loss",
     }),
   );
 } finally {

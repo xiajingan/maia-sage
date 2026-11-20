@@ -8,6 +8,8 @@
 
 已绑定用户在普通浏览器进入有效且有联系人的实例页，Sage 默认请求固定联系人页的 `getBoundNameComponentConfig`，使用服务端返回的企业、应用及允许展示的引用。官方 `agentConfig` 和 `WWOpenData.checkSession` 依次成功后才挂载姓名组件。浏览器会话核验失败时说明原因并保留联系人和同步状态。普通网页登录须由本人显式发起。退出、分页、切换范围或当前读取失去权限会清理旧配置与元素。
 
+已绑定用户的 PC 组件成功挂载后，页面在当前配置到期前向 Mud 重新核对本页范围并申请新签名。每份新配置均重新核验官方浏览器会话。若应答晚于上一份配置的到期时间，页面先收起姓名，待新配置核验成功后恢复。权限拒绝或浏览器会话失效会停止自动续签。
+
 ## 页面与客户端
 
 入口位于当前个人工作空间的「企业微信接入」。安装控制器为 `createWecomPage({api,session})`，联系人控制器为 `createContactPage({api,session})`，均通过同一个 [Mud API adapter](../../src/api/mud.ts) 调用生成方法、校验生成 Schema。DTO 取自 Mud 发布的 `maia-mud-client@0.7.0`，摘要和升级方式见[认证依赖](authentication.md#结构与依赖)。

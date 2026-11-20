@@ -310,7 +310,9 @@ export function createNameContextController({
     state.config = config;
   }
 
-  async function loadBoundConfig() {
+  async function loadBoundConfig(previous?: NameComponentConfig) {
+    if (state.operation || state.pendingCreate || previous !== state.config)
+      return;
     await run(
       async (signal, selected) => {
         const config = await session.withAccess(signal, (token) =>
@@ -327,7 +329,10 @@ export function createNameContextController({
             signal,
           ),
         );
-        if (config && !signal.aborted && valid()) applyConfig(config, selected);
+        if (!config || signal.aborted || !valid()) return;
+        if (previous && config.expiresAt <= previous.expiresAt)
+          throw new ApiFailure(403);
+        applyConfig(config, selected);
       },
       () => {
         // An explicit browser authorization starts its own gated operation.

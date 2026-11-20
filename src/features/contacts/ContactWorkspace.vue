@@ -49,7 +49,9 @@ const namesMounted = ref(false),
   nameStage = ref<NameRenderStatus["stage"]>();
 const contactTable = ref<globalThis.HTMLElement>();
 let binding: globalThis.AbortController | undefined;
+let renewal: ReturnType<typeof globalThis.setTimeout> | undefined;
 function stopNames() {
+  globalThis.clearTimeout(renewal);
   binding?.abort();
   binding = undefined;
   namesMounted.value = false;
@@ -108,7 +110,15 @@ watch(
       },
       onStatus: (status) => {
         if (current.signal.aborted) return;
-        nameStage.value = status.stage;
+        if (status.stage === "bound" && "source" in config && names) {
+          // Recheck the same page before this grant ends. Its SDK expiry remains armed
+          // while the request is in flight and each replacement rechecks the PC session.
+          const remaining = config.expiresAt - Date.now();
+          const lead = Math.min(10000, remaining / 4);
+          renewal = globalThis.setTimeout(() => {
+            if (!current.signal.aborted) void names.loadBoundConfig(config);
+          }, Math.max(1000, remaining - lead));
+        }
         if (
           [
             "browser_session_unavailable",
@@ -118,8 +128,16 @@ watch(
             "timeout",
             "reload_required",
           ].includes(status.stage)
-        )
+        ) {
           namesMounted.value = false;
+          // A slow renewal may outlive the old signature. A provider failure,
+          // however, invalidates any outstanding renewal for that binding.
+          if (status.stage !== "expired") {
+            globalThis.clearTimeout(renewal);
+            if ("source" in config && names?.state.busy) names.suspend();
+          }
+        }
+        nameStage.value = status.stage;
       },
     });
   },
