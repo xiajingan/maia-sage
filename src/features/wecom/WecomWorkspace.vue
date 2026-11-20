@@ -399,6 +399,10 @@ onBeforeUnmount(page.dispose);
               <dt>安装</dt>
               <dd>可信绑定已完成</dd>
             </div>
+            <div v-if="instance.currentUserWecomBound !== undefined">
+              <dt>我的企微身份</dt>
+              <dd>{{ instance.currentUserWecomBound ? "已绑定" : "未确认绑定" }}</dd>
+            </div>
             <div>
               <dt>联系人同步</dt>
               <dd>{{ syncLabels[instance.sync] }}</dd>

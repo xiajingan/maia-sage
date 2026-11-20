@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, watch, ref, nextTick } from "vue";
+import { computed, onBeforeUnmount, onMounted, watch, ref, nextTick } from "vue";
 import type { WecomApi, NameApi } from "../../api/mud";
 import type { createSessionController } from "../../auth/session";
 import { createContactPage } from "./contact-page";
@@ -38,6 +38,13 @@ const names =
         session: props.session,
       })
     : undefined;
+const useBoundNames = computed(() =>
+  Boolean(
+    state.page?.currentUserWecomBound &&
+    props.api.getBoundNameComponentConfig &&
+    !/MicroMessenger/i.test(globalThis.navigator.userAgent)
+  ),
+);
 const namesMounted = ref(false),
   nameStage = ref<NameRenderStatus["stage"]>();
 const contactTable = ref<globalThis.HTMLElement>();
@@ -67,8 +74,11 @@ watch(
       cursor,
     });
     const saved = readNameReturn();
-    if (saved) await names.resume(saved);
+    if (saved && saved.returnPath === globalThis.location.pathname)
+      await names.resume(saved);
     else if (names.state.operation) await names.query();
+    else if (useBoundNames.value && page.items.length && !names.state.pendingCreate)
+      await names.loadBoundConfig();
   },
   { flush: "sync" },
 );
@@ -101,6 +111,7 @@ watch(
         nameStage.value = status.stage;
         if (
           [
+            "browser_session_unavailable",
             "error",
             "expired",
             "invalid",
@@ -183,6 +194,9 @@ onBeforeUnmount(dispose);
     <p>仅展示当前空间此企微实例允许访问的资料。联系人不自动成为 Maia 成员。</p>
     <div class="context">
       <span class="pill">企微实例 {{ instanceId }}</span>
+      <span v-if="state.page?.currentUserWecomBound && state.page.accessState === 'active'">
+        当前 Maia 用户已绑定企微身份
+      </span>
     </div>
   </section>
   <section
@@ -267,11 +281,15 @@ onBeforeUnmount(dispose);
               ? "正在核对姓名展示资格…"
               : namesMounted
                 ? "官方组件已绑定，实际姓名请本人核对；成员标识不能代表姓名。"
-                : "姓名暂不可展示，可授权当前企业的姓名展示。")
+                : useBoundNames
+                  ? nameStage === "browser_session_unavailable"
+                    ? "当前浏览器的企微姓名展示会话未通过核验。"
+                    : "姓名暂不可展示。"
+                  : "姓名暂不可展示，可授权当前企业的姓名展示。")
         }}
       </p>
       <p
-        v-if="nameStage && !['bound', 'update'].includes(nameStage)"
+        v-if="nameStage && !['bound', 'update', 'browser_session_unavailable'].includes(nameStage)"
         class="muted"
       >
         {{
@@ -284,7 +302,7 @@ onBeforeUnmount(dispose);
       </p>
       <div class="terminal-actions">
         <button
-          v-if="!names.state.operation"
+          v-if="!names.state.operation && (!useBoundNames || (!names.state.busy && (!names.state.config || nameStage === 'browser_session_unavailable')))"
           :disabled="names.state.busy || names.state.blocked"
           @click="authorizeNames"
         >

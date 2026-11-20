@@ -1,11 +1,16 @@
-import type { GetNameComponentConfigResponse } from "maia-mud-client";
-export type NameComponentConfig = GetNameComponentConfigResponse;
+import type {
+  GetNameComponentConfigResponse,
+  GetBoundNameComponentConfigResponse,
+} from "maia-mud-client";
+export type NameComponentConfig =
+  GetNameComponentConfigResponse | GetBoundNameComponentConfigResponse;
 export type NameRenderStatus = {
   stage:
     | "load"
     | "config"
     | "agentConfig"
     | "checkSession"
+    | "browser_session_unavailable"
     | "bound"
     | "update"
     | "error"
@@ -162,6 +167,7 @@ export async function bindNames(
   async function step(
     next: NameRenderStatus["stage"],
     start: (callbacks: Callbacks) => void,
+    failureReason = "error",
   ) {
     if (!current()) throw new Error(signal.aborted ? "cancelled" : "expired");
     report(next);
@@ -182,7 +188,7 @@ export async function bindNames(
       );
       signal.addEventListener("abort", cancel, { once: true });
       try {
-        start({ success: () => finish(), fail: () => finish("error") });
+        start({ success: () => finish(), fail: () => finish(failureReason) });
       } catch {
         finish("error");
       }
@@ -221,9 +227,14 @@ export async function bindNames(
     openData = sdk.openData();
     if (!openData || typeof openData.bind !== "function")
       throw new Error("error");
-    if (openData.checkSession)
-      await step("checkSession", (callbacks) =>
-        openData!.checkSession!(callbacks),
+    if (openData.checkSession || "source" in input)
+      await step(
+        "checkSession",
+        (callbacks) => {
+          if (openData!.checkSession) openData!.checkSession(callbacks);
+          else callbacks.fail();
+        },
+        "source" in input ? "browser_session_unavailable" : "error",
       );
     if (!current()) throw new Error("expired");
     // Old clients may lack on/off; only subscribe when both lifecycle operations exist.
@@ -267,7 +278,10 @@ export async function bindNames(
     if (interruptedGlobal && (reason === "error" || reason === "load"))
       return report("reload_required");
     return report(
-      reason === "cancelled" || reason === "timeout" || reason === "expired"
+      reason === "cancelled" ||
+        reason === "timeout" ||
+        reason === "expired" ||
+        reason === "browser_session_unavailable"
         ? reason
         : "error",
     );

@@ -2,9 +2,15 @@
 
 本文维护 Sage 的安装与联系人页面。授权、实例绑定、范围交集与同步事实由 Mud 提供；跨工程设计见[管理端契约](../../../docs/architecture/management-ui-contracts.md)。官方姓名组件使用 Mud 的临时页面配置，页面不把成员标识作为姓名。
 
+## 已绑定身份的 PC 姓名展示
+
+实例列表和联系人页通过请求头 `X-Maia-Wecom-Binding: 1` 读取服务端 `currentUserWecomBound`。当前 Maia 用户重新登录后，以本次认证响应为准。字段缺失时沿用既有表现；联系人和授权可见名单不能用于推测本人身份。
+
+已绑定用户在普通浏览器进入有效且有联系人的实例页，Sage 默认请求固定联系人页的 `getBoundNameComponentConfig`，使用服务端返回的企业、应用及允许展示的引用。官方 `agentConfig` 和 `WWOpenData.checkSession` 依次成功后才挂载姓名组件。浏览器会话核验失败时说明原因并保留联系人和同步状态。普通网页登录须由本人显式发起。退出、分页、切换范围或当前读取失去权限会清理旧配置与元素。
+
 ## 页面与客户端
 
-入口位于当前个人工作空间的「企业微信接入」。安装控制器为 `createWecomPage({api,session})`，联系人控制器为 `createContactPage({api,session})`，均通过同一个 [Mud API adapter](../../src/api/mud.ts) 调用生成方法、校验生成 Schema。DTO 取自 Mud 发布的 `maia-mud-client@0.6.0`，摘要和升级方式见[认证依赖](authentication.md#结构与依赖)。
+入口位于当前个人工作空间的「企业微信接入」。安装控制器为 `createWecomPage({api,session})`，联系人控制器为 `createContactPage({api,session})`，均通过同一个 [Mud API adapter](../../src/api/mud.ts) 调用生成方法、校验生成 Schema。DTO 取自 Mud 发布的 `maia-mud-client@0.7.0`，摘要和升级方式见[认证依赖](authentication.md#结构与依赖)。
 
 | 页面       | 固定路径                                                              |
 | ---------- | --------------------------------------------------------------------- |

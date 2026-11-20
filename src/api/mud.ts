@@ -14,12 +14,15 @@ import {
   getNameContext,
   completeNameContext,
   getNameComponentConfig,
+  getBoundNameComponentConfig,
   type CreateNameContextData,
   type CreateNameContextResponse,
   type GetNameContextData,
   type GetNameContextResponse,
   type CompleteNameContextData,
   type CompleteNameContextResponse,
+  type GetBoundNameComponentConfigData,
+  type GetBoundNameComponentConfigResponse,
   type GetNameComponentConfigData,
   type GetNameComponentConfigResponse,
   createWecomInstallOperation,
@@ -52,6 +55,7 @@ import {
 import {
   NameContextViewSchema,
   NameComponentConfigSchema,
+  BoundNameComponentConfigSchema,
   InstallViewSchema,
   InstallRecoveryViewSchema,
   InstallRecoverySourceViewSchema,
@@ -144,6 +148,11 @@ export interface WecomApi {
   ): Promise<GetContactSyncResponse>;
 }
 export interface NameApi {
+  getBoundNameComponentConfig(
+    token: string,
+    input: Pick<GetBoundNameComponentConfigData, "path" | "body">,
+    signal: AbortSignal,
+  ): Promise<GetBoundNameComponentConfigResponse>;
   createNameContext(
     token: string,
     input: Pick<CreateNameContextData, "path" | "body">,
@@ -285,6 +294,19 @@ export function createMudApi(baseUrl: string): Api & WecomApi & NameApi {
         NameContextViewSchema,
       );
     },
+    async getBoundNameComponentConfig(token, input, signal) {
+      return read<GetBoundNameComponentConfigResponse>(
+        await getBoundNameComponentConfig({
+          client,
+          auth: token,
+          ...input,
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: requestSignal(signal),
+        }),
+        BoundNameComponentConfigSchema,
+      );
+    },
     async getNameComponentConfig(token, input, signal) {
       return read<GetNameComponentConfigResponse>(
         await getNameComponentConfig({
@@ -343,6 +365,7 @@ export function createMudApi(baseUrl: string): Api & WecomApi & NameApi {
       return read<ListChannelAppInstancesResponse>(
         await listChannelAppInstances({
           client,
+          headers: { "X-Maia-Wecom-Binding": "1" },
           auth: token,
           path: { workspaceId },
           query: { cursor },
@@ -356,6 +379,7 @@ export function createMudApi(baseUrl: string): Api & WecomApi & NameApi {
       return read<ListContactsResponse>(
         await listContacts({
           client,
+          headers: { "X-Maia-Wecom-Binding": "1" },
           auth: token,
           path: { id },
           query: { cursor, limit: 20 },

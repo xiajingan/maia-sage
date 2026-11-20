@@ -1,10 +1,8 @@
 import { shallowReactive, watch } from "vue";
-import type {
-  CreateNameContextResponse,
-  GetNameComponentConfigResponse,
-} from "maia-mud-client";
+import type { CreateNameContextResponse } from "maia-mud-client";
 import { Check } from "typebox/value";
 import { NameContextViewSchema } from "maia-mud-client/schemas";
+import type { NameComponentConfig } from "./wecom-sdk";
 import type { NameApi } from "../../api/mud";
 import { ApiFailure, type createSessionController } from "../../auth/session";
 import { businessReturnPath } from "../../auth/oidc";
@@ -128,7 +126,7 @@ export function createNameContextController({
 }) {
   const state = shallowReactive<{
     operation?: Operation;
-    config?: GetNameComponentConfigResponse;
+    config?: NameComponentConfig;
     busy: boolean;
     message?: string;
     blocked: boolean;
@@ -301,6 +299,44 @@ export function createNameContextController({
     );
     return true;
   }
+  function applyConfig(config: NameComponentConfig, selected: NameSelection) {
+    if (
+      config.instanceId !== selected.instanceId ||
+      config.scopeVersion !== selected.scopeVersion ||
+      config.pageUrl !== window.location.href ||
+      config.expiresAt <= Date.now()
+    )
+      throw new ApiFailure(403);
+    state.config = config;
+  }
+
+  async function loadBoundConfig() {
+    await run(
+      async (signal, selected) => {
+        const config = await session.withAccess(signal, (token) =>
+          api.getBoundNameComponentConfig(
+            token,
+            {
+              path: { id: selected.instanceId },
+              body: {
+                pageKey: "instance_contacts",
+                limit: 20,
+                ...(selected.cursor ? { cursor: selected.cursor } : {}),
+              },
+            },
+            signal,
+          ),
+        );
+        if (config && !signal.aborted && valid()) applyConfig(config, selected);
+      },
+      () => {
+        // An explicit browser authorization starts its own gated operation.
+        // Preserve any outstanding manual operation for reconciliation.
+        if (!state.pendingCreate && !state.operation) state.blocked = false;
+      },
+    );
+  }
+
   async function query(restoring = false) {
     const op = state.operation;
     if (!op || state.blocked) return;
@@ -352,15 +388,8 @@ export function createNameContextController({
           ),
         );
         if (!config || signal.aborted || !valid()) return;
-        if (
-          config.operationId !== value.operationId ||
-          config.instanceId !== selected.instanceId ||
-          config.scopeVersion !== selected.scopeVersion ||
-          config.pageUrl !== window.location.href ||
-          config.expiresAt <= Date.now()
-        )
-          throw new ApiFailure(403);
-        state.config = config;
+        if (config.operationId !== value.operationId) throw new ApiFailure(403);
+        applyConfig(config, selected);
       },
       (error) => {
         if (
@@ -571,6 +600,7 @@ export function createNameContextController({
   return {
     state,
     select,
+    loadBoundConfig,
     start,
     query,
     receive,

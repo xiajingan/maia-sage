@@ -118,6 +118,7 @@ try {
     scopeVersion: "1",
     rowVersion: "1",
     installation: "completed",
+    currentUserWecomBound: true,
     sync: "partial",
     archive: "not_enabled",
     terminal: "not_configured",
@@ -184,12 +185,14 @@ try {
       });
     if (path.endsWith("/members"))
       return route.fulfill({ json: { items: [], nextCursor: null } });
-    if (path.endsWith("/channel-app-instances"))
+    if (path.endsWith("/channel-app-instances")) {
+      assert.equal(req.headers()["x-maia-wecom-binding"], "1");
       return mode === "instance-error"
         ? route.fulfill({ status: 503, json: safeError })
         : route.fulfill({
             json: { items: instancesEmpty ? [] : [instance], nextCursor: null },
           });
+    }
     if (
       path.endsWith("/install-recoveries/11") ||
       path.endsWith("/install-recoveries/12")
@@ -667,6 +670,7 @@ try {
     await button("刷新实例").click();
     const card = page.locator('[data-instance-id="20"]');
     await expect(card).toContainText("部分完成");
+    await expect(card.getByText("已绑定", { exact: true })).toBeVisible();
     await expect(card).toContainText("尚未开通");
     await expect(card).toContainText("尚未配置");
     mode = "instance-error";

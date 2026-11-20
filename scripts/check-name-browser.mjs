@@ -96,7 +96,8 @@ try {
       errors.push("console-error");
   });
   let holdAuthorization = true;
-  let cookieRequests = 0;
+  let cookieRequests = 0,
+    boundConfigRequests = 0;
   let mode = "ready",
     queries = 0,
     creates = 0,
@@ -143,14 +144,40 @@ try {
     if (url.hostname === "res.wx.qq.com")
       return route.fulfill({
         contentType: "text/javascript; charset=utf-8",
-        body: `window.__syntheticStages=[];window.wx={config(){window.__syntheticStages.push('config')},ready(cb){cb()},error(){},agentConfig(input){window.__syntheticStages.push('agentConfig');input.success()}};`,
+        body: `window.__syntheticStages=[];window.wx={config(){window.__syntheticStages.push('config')},ready(cb){cb()},error(){},agentConfig(input){window.__syntheticStages.push('agentConfig');window.__syntheticCorp=input.corpid;input.success()}};`,
       });
     if (url.pathname === "/wwopen/js/jwxwork-1.0.0.js") {
+      const browserSession = {
+        corporation:
+          mode === "bound-wrong-corp"
+            ? "another-synthetic-corp"
+            : "synthetic-corp",
+        expiresAt: mode === "bound-expired" ? 1 : Date.now() + 60000,
+      };
       if (mode === "sdk-error") return route.abort();
       if (sdkGate) await sdkGate;
       return route.fulfill({
         contentType: "text/javascript; charset=utf-8",
-        body: `window.__syntheticEvents={};window.WWOpenData={checkSession(input){window.__syntheticStages.push('checkSession');input.success()},bind(el){if(!el.isConnected)throw Error('unmounted');window.__syntheticStages.push('bind');const shadow=el.shadowRoot||el.attachShadow({mode:'open'});shadow.textContent='合成姓名示例（非真人）'},on(event,cb){window.__syntheticEvents[event]=cb},off(event){delete window.__syntheticEvents[event]}};`,
+        body: `
+          const browserSession = ${JSON.stringify(browserSession)};
+          window.__syntheticEvents = {};
+          window.WWOpenData = {
+            checkSession(input) {
+              window.__syntheticStages.push('checkSession');
+              if (browserSession.corporation === window.__syntheticCorp && browserSession.expiresAt > Date.now()) input.success();
+              else input.fail();
+            },
+            bind(el) {
+              if (!el.isConnected) throw Error('unmounted');
+              window.__syntheticStages.push('bind');
+              const shadow = el.shadowRoot || el.attachShadow({mode: 'open'});
+              shadow.textContent = el.getAttribute('openid') === 'synthetic-userid-b' ? '合成成员乙' : '合成成员甲';
+            },
+            on(event,cb){window.__syntheticEvents[event]=cb},
+            off(event){delete window.__syntheticEvents[event]}
+          };
+          ${mode === "bound-missing" ? "delete window.WWOpenData.checkSession" : ""}
+        `,
       });
     }
     if (
@@ -204,6 +231,7 @@ try {
     else if (url.pathname.endsWith("/members"))
       data = { items: [], nextCursor: null };
     else if (url.pathname.endsWith("/contacts")) {
+      assert.equal(request.headers()["x-maia-wecom-binding"], "1");
       if (mode === "forbidden")
         return route.fulfill({
           status: 403,
@@ -219,7 +247,13 @@ try {
         safeReason: null,
         lastTrustedAt: 1800000000000,
         sync,
-        items: mode === "empty" ? [] : [contact],
+        ...(mode.startsWith("bound-") ? { currentUserWecomBound: true } : {}),
+        items:
+          mode === "empty"
+            ? []
+            : mode.startsWith("bound-")
+              ? [contact, { ...contact, id: "31", sourceId: "synthetic-b" }]
+              : [contact],
         nextCursor: null,
         scopeVersion: mode === "scope" ? "2" : "1",
       };
@@ -254,10 +288,30 @@ try {
         phase: "completed",
         nextAction: "use_component",
       };
-    else if (url.pathname.endsWith("/name-component-config")) {
-      bodies.push(request.postDataJSON());
+    else if (
+      url.pathname.endsWith("/name-component-config") ||
+      url.pathname.endsWith("/bound-name-component-config")
+    ) {
+      const bound = url.pathname.endsWith("/bound-name-component-config");
+      if (bound) {
+        boundConfigRequests++;
+        if (mode === "bound-denied")
+          return route.fulfill({
+            status: 403,
+            json: {
+              code: "FORBIDDEN",
+              message: "合成拒绝",
+              requestId: "synthetic",
+              recovery: "请核对当前浏览器的企微企业",
+            },
+          });
+        assert.deepEqual(request.postDataJSON(), {
+          pageKey: "instance_contacts",
+          limit: 20,
+        });
+      } else bodies.push(request.postDataJSON());
       data = {
-        operationId: "50",
+        ...(bound ? { source: "installation_binding" } : { operationId: "50" }),
         instanceId: "20",
         pageKey: "instance_contacts",
         pageUrl: origin + path,
@@ -272,6 +326,15 @@ try {
         agentSignature: "b".repeat(40),
         references: [
           { contactId: "30", userId: "synthetic-userid", type: "userName" },
+          ...(bound
+            ? [
+                {
+                  contactId: "31",
+                  userId: "synthetic-userid-b",
+                  type: "userName",
+                },
+              ]
+            : []),
         ],
         nextCursor: null,
       };
@@ -453,6 +516,75 @@ try {
       page.getByRole("heading", { name: "同步已完成" }),
     ).toBeVisible();
   }
+  // A fresh Maia page gets a binding only from the authenticated contact response.
+  const manualCreates = creates,
+    previousQueries = queries;
+  for (const scenario of [
+    "bound-active",
+    "bound-expired",
+    "bound-wrong-corp",
+    "bound-missing",
+    "bound-denied",
+  ]) {
+    mode = scenario;
+    const fresh = await context.newPage();
+    await fresh.goto(origin + path);
+    await expect(
+      fresh.getByText("当前 Maia 用户已绑定企微身份", { exact: true }),
+    ).toBeVisible();
+    if (scenario === "bound-active") {
+      await expect(
+        fresh.getByRole("cell", { name: "合成成员甲", exact: true }),
+      ).toBeVisible();
+      await expect(
+        fresh.getByRole("cell", { name: "合成成员乙", exact: true }),
+      ).toBeVisible();
+      assert.deepEqual(
+        await fresh.evaluate(() => globalThis.__syntheticStages),
+        ["agentConfig", "checkSession", "bind", "bind"],
+      );
+    } else if (scenario === "bound-denied") {
+      await expect(
+        fresh.getByRole("button", { name: "授权姓名展示" }),
+      ).toBeEnabled();
+      await expect(fresh.getByText("请核对当前浏览器的企微企业")).toBeVisible();
+      await expect(fresh.locator("ww-open-data")).toHaveCount(0);
+    } else {
+      await expect(
+        fresh.getByText("当前浏览器的企微姓名展示会话未通过核验。", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(fresh.locator("ww-open-data")).toHaveCount(0);
+    }
+    assert.equal(creates, manualCreates);
+    assert.equal(queries, previousQueries);
+    await fresh.close();
+  }
+  // Restore a same-tab explicit operation through the normal authenticated API.
+  // The stored reference alone is not evidence of a usable browser session.
+  mode = "bound-active";
+  const returning = await context.newPage();
+  await returning.addInitScript(
+    ({ path }) => {
+      sessionStorage.setItem(
+        "sage.wecom.name-return",
+        JSON.stringify({
+          operationId: "50",
+          instanceId: "20",
+          returnPath: path,
+          expiresAt: Date.now() + 60000,
+        }),
+      );
+    },
+    { path },
+  );
+  await returning.goto(origin + path);
+  await expect.poll(() => queries).toBe(previousQueries + 1);
+  await expect(returning.locator("ww-open-data")).toHaveCount(1);
+  assert.equal(creates, manualCreates);
+  await returning.close();
+  assert.equal(boundConfigRequests, 5);
   // Another browser context has no original Maia in-memory bearer or popup source.
   const isolated = await browser.newContext({ ignoreHTTPSErrors: true });
   const detached = await isolated.newPage();
@@ -497,6 +629,7 @@ try {
       browser: "Chrome",
       creates,
       cookieRequests,
+      boundConfigRequests,
       cases:
         "popup close/reopen/source replacement, source/origin, no-code result, init-before-mount, error/update, scope/revocation, wrong corporation, expiry, missing loginSuite, empty/mobile, isolated browser",
     }),

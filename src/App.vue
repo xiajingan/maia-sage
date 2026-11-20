@@ -28,6 +28,10 @@ const installRoute = computed(() =>
     path.value,
   ),
 );
+function signIn() {
+  clearNameReturn();
+  void props.controller?.signIn();
+}
 function navigate(target: string) {
   path.value = target;
   if (typeof globalThis.history !== "undefined")
@@ -195,7 +199,7 @@ watch(
             正在核实原会话已撤销…
           </p>
           <div>
-            <button @click="controller.signIn()">
+            <button @click="signIn">
               重新登录
             </button>
           </div>
@@ -211,7 +215,7 @@ watch(
               @click="controller.retryLogout()"
             >
               重试核实退出
-            </button><button @click="controller.signIn()">
+            </button><button @click="signIn">
               重新登录
             </button>
           </div>
@@ -224,7 +228,7 @@ watch(
           <div>
             <button
               class="primary"
-              @click="controller.signIn()"
+              @click="signIn"
             >
               使用其他账号登录
             </button>
@@ -248,7 +252,7 @@ watch(
               @click="controller.load()"
             >
               重试读取
-            </button><button @click="controller.signIn()">
+            </button><button @click="signIn">
               重新登录
             </button>
           </div>
@@ -265,7 +269,7 @@ watch(
           <div>
             <button
               class="primary"
-              @click="controller.signIn()"
+              @click="signIn"
             >
               登录或注册
             </button>

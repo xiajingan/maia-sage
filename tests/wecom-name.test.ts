@@ -130,6 +130,25 @@ test("web分支跳过config；error清理且不读取事件载荷，卸载解绑
   abort.abort();
 });
 
+test.each(["missing", "rejected"])(
+  "本人绑定模式要求当前浏览器通过企微会话检查（%s）",
+  async (scenario) => {
+    const f = fixture();
+    const openData = f.sdk.openData()!;
+    if (scenario === "missing") delete openData.checkSession;
+    else openData.checkSession = ({ fail }) => fail();
+    f.sdk.openData = () => openData;
+    const mount = vi.fn(async () => [f.element]);
+    const result = await bindNames(
+      { ...config, environment: "web", source: "installation_binding" },
+      { sdk: f.sdk, mount, signal: new AbortController().signal },
+    );
+    expect(result.stage).toBe("browser_session_unavailable");
+    expect(mount).not.toHaveBeenCalled();
+    expect(f.calls).not.toContain("bind");
+  },
+);
+
 test("官方元素仅在初始化成功后挂载，URL改变或过期立即失效", async () => {
   vi.useFakeTimers();
   const f = fixture(),
