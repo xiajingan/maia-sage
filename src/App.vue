@@ -144,7 +144,7 @@ watch(
         </button>
         <button
           v-if="api"
-          :aria-current="installRoute ? 'page' : undefined"
+          :aria-current="installRoute || contactsRoute ? 'page' : undefined"
           @click="navigate(wecomPath())"
         >
           企业微信接入
@@ -158,6 +158,7 @@ watch(
         :session="controller"
         :workspace-id="contactsRoute[1]!"
         :instance-id="contactsRoute[2]!"
+        @back="navigate(wecomPath())"
       />
       <WecomWorkspace
         v-else-if="installRoute && api && controller.state.session"

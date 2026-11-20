@@ -21,6 +21,20 @@ const manager = computed(
 const inWorkspace = computed(
   () => props.session.state.session?.rootWorkspace.id === props.workspaceId,
 );
+const canStartInstallation = computed(
+  () =>
+    !state.listBusy &&
+    !state.listError &&
+    !state.instanceCursor &&
+    state.instances?.items.length === 0 &&
+    !state.instances.nextCursor,
+);
+const showInstallationPanel = computed(
+  () =>
+    canStartInstallation.value ||
+    state.busy ||
+    Boolean(state.operationId || state.unknownStart || state.message),
+);
 const phases = {
   awaiting_authorization: "等待企微授权",
   awaiting_verification: "接入待核对",
@@ -66,14 +80,18 @@ const reason = computed(() => {
         : undefined;
   }
 });
-const launchUrl = computed(page.authorizationUrl);
-const memberLaunch = computed(
+const identityRound = computed(
   () =>
-    launchUrl.value &&
     state.operation?.launch?.kind === "member" &&
     (state.kind === "recovery" ||
       state.operation.safeReason === "administrator_identity_required"),
 );
+const launchUrl = computed(() =>
+  identityRound.value || canStartInstallation.value
+    ? page.authorizationUrl()
+    : undefined,
+);
+const memberLaunch = computed(() => launchUrl.value && identityRound.value);
 const canRecover = computed(
   () =>
     !state.mustQuery &&
@@ -105,7 +123,6 @@ onBeforeUnmount(page.dispose);
 <template>
   <section class="intro">
     <h1>企业微信接入</h1>
-    <p>接入当前个人工作空间，按已核实的授权范围管理内部联系人。</p>
     <div class="context">
       <span class="pill">{{ session.state.session?.rootWorkspace.name }}</span>
     </div>
@@ -120,6 +137,7 @@ onBeforeUnmount(page.dispose);
   </section>
   <template v-else>
     <section
+      v-if="showInstallationPanel"
       class="panel"
       aria-labelledby="install-title"
       :aria-busy="state.busy"
@@ -226,6 +244,7 @@ onBeforeUnmount(page.dispose);
             <button
               v-if="
                 state.operation.nextAction === 'start_new' &&
+                  canStartInstallation &&
                   !canRecover &&
                   !state.unknownRecovery
               "
@@ -235,7 +254,13 @@ onBeforeUnmount(page.dispose);
               准备重新发起
             </button>
             <button
-              v-if="state.operation.instanceId"
+              v-if="
+                state.operation.instanceId &&
+                  !state.instances?.items.some(
+                    (instance) =>
+                      instance.instanceId === state.operation?.instanceId,
+                  )
+              "
               :disabled="state.busy"
               @click="emit('contacts', state.operation.instanceId)"
             >
@@ -316,30 +341,26 @@ onBeforeUnmount(page.dispose);
             </button>
           </div>
         </template>
-        <template v-else-if="manager">
+        <template v-else-if="canStartInstallation && manager">
           <p>
             使用成员扫码，或由企业管理员授权。接入只作用于当前个人工作空间。
           </p>
           <div class="terminal-actions">
             <button
               class="primary"
-              :disabled="
-                state.busy || state.listBusy || Boolean(state.listError)
-              "
+              :disabled="state.busy"
               @click="page.start('member')"
             >
               成员扫码接入
             </button><button
-              :disabled="
-                state.busy || state.listBusy || Boolean(state.listError)
-              "
+              :disabled="state.busy"
               @click="page.start('admin')"
             >
               管理员接入
             </button>
           </div>
         </template>
-        <p v-else>
+        <p v-else-if="canStartInstallation">
           只有当前空间管理者可以发起接入。
         </p>
       </div>
@@ -401,7 +422,9 @@ onBeforeUnmount(page.dispose);
             </div>
             <div v-if="instance.currentUserWecomBound !== undefined">
               <dt>我的企微身份</dt>
-              <dd>{{ instance.currentUserWecomBound ? "已绑定" : "未确认绑定" }}</dd>
+              <dd>
+                {{ instance.currentUserWecomBound ? "已绑定" : "未确认绑定" }}
+              </dd>
             </div>
             <div>
               <dt>联系人同步</dt>
@@ -452,7 +475,11 @@ onBeforeUnmount(page.dispose);
         v-else-if="state.instances && !state.listError"
         class="notice"
       >
-        当前空间暂无企微实例。可从上方选择接入方式。
+        {{
+          state.instanceCursor
+            ? "当前页没有更多企微实例。"
+            : "当前空间暂无企微实例。"
+        }}
       </p>
       <div
         v-if="state.instances?.nextCursor || state.instanceCursor"

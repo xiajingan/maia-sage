@@ -146,8 +146,8 @@ try {
     sourceId: "synthetic-member" + "合成标识".repeat(8),
     position: null,
     positionAvailability: "not_authorized",
-    avatarUrl: null,
-    avatarAvailability: "not_returned",
+    avatarUrl: "https://synthetic.example/contact-avatar.png",
+    avatarAvailability: "available",
     lastTrustedAt: 1800000000000,
     state: "active",
     safeReason: null,
@@ -673,6 +673,8 @@ try {
     await expect(card.getByText("已绑定", { exact: true })).toBeVisible();
     await expect(card).toContainText("尚未开通");
     await expect(card).toContainText("尚未配置");
+    await expect(button("成员扫码接入")).toHaveCount(0);
+    await expect(button("管理员接入")).toHaveCount(0);
     mode = "instance-error";
     await button("刷新实例").click();
     await expect(page.getByRole("alert")).toContainText("上次读取");
@@ -684,6 +686,13 @@ try {
     );
     const row = page.locator('[data-contact-id="30"]');
     await expect(row).toBeVisible();
+    await expect(row.locator(".avatar-placeholder")).toBeVisible();
+    await expect(row.locator(".directory-avatar img")).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "企微实例", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("实例编号 20", { exact: true })).toBeVisible();
+    await expect(button("返回企微实例")).toBeVisible();
     await page.getByRole("link", { name: "跳到主要内容" }).focus();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("main")).toBeFocused();
@@ -697,12 +706,20 @@ try {
       `${origin}/workspaces/1/channel-app-instances/20/contacts`,
     );
 
-    await expect(
-      page.getByRole("columnheader", { name: "成员标识（来源命名空间）" }),
-    ).toBeVisible();
+    await expect(page.getByRole("columnheader")).toHaveText([
+      "头像",
+      "姓名",
+      "职位",
+    ]);
     await expect(row).toContainText("姓名暂不可展示");
-    await expect(row).toContainText("未获准");
-    await expect(row).toContainText("未返回");
+    await expect(row).not.toContainText(
+      /synthetic-member|未获准|未返回|当前可访问/,
+    );
+    const maintenance = page.getByText("维护与同步", { exact: true });
+    await expect(
+      page.getByRole("heading", { name: "联系人同步" }),
+    ).toBeHidden();
+    await maintenance.click();
     await expect(page.getByText("覆盖不完整", { exact: true })).toBeVisible();
     await button("下一页联系人").click();
     await expect(page.locator('[data-contact-id="31"]')).toBeVisible();
@@ -760,14 +777,14 @@ try {
       ),
     );
     const tableRegion = page.getByRole("region", {
-      name: "联系人资料，可横向滚动",
+      name: "联系人资料",
     });
-    await tableRegion.focus();
-    await expect(tableRegion).toBeFocused();
-    await page.keyboard.press("ArrowRight");
-    await expect
-      .poll(() => tableRegion.evaluate((element) => element.scrollLeft))
-      .toBeGreaterThan(0);
+    await expect(tableRegion).toBeVisible();
+    assert(
+      await tableRegion.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    );
     await mkdir("/tmp/maia-sage-wecom-ui", { recursive: true });
     await page.screenshot({
       path: "/tmp/maia-sage-wecom-ui/contacts-synthetic.png",
@@ -792,9 +809,14 @@ try {
     const postsBeforeList = installPosts;
     await button("企业微信接入").click();
     await expect(page).toHaveURL(`${origin}/workspaces/1/wecom`);
-    await expect(button("管理员接入")).toBeEnabled();
+    await expect(card).toBeVisible();
+    await expect(button("成员扫码接入")).toHaveCount(0);
+    await expect(button("管理员接入")).toHaveCount(0);
     assert.equal(installPosts, postsBeforeList);
+    instancesEmpty = true;
     mode = "ready";
+    await button("刷新实例").click();
+    await expect(button("管理员接入")).toBeEnabled();
     Object.assign(operation, {
       operationId: "11",
       phase: "awaiting_authorization",
@@ -841,6 +863,11 @@ try {
         "forbidden",
       ]) {
         await page.getByLabel("预览状态").selectOption(state);
+        if (prototype === "wecom-onboarding") {
+          const choices = state === "empty" ? 1 : 0;
+          await expect(button("成员扫码接入")).toHaveCount(choices);
+          await expect(button("管理员接入")).toHaveCount(choices);
+        }
         assert(
           await page.evaluate(
             () => document.documentElement.scrollWidth <= innerWidth,

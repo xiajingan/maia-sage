@@ -1,9 +1,17 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch, ref, nextTick } from "vue";
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  watch,
+  ref,
+  nextTick,
+} from "vue";
 import type { WecomApi, NameApi } from "../../api/mud";
 import type { createSessionController } from "../../auth/session";
 import { createContactPage } from "./contact-page";
 import WecomName from "./WecomName.vue";
+import ContactAvatar from "./ContactAvatar.vue";
 import {
   createNameContextController,
   readNameReturn,
@@ -17,6 +25,7 @@ const props = defineProps<{
   workspaceId: string;
   instanceId: string;
 }>();
+const emit = defineEmits<{ back: [] }>();
 const {
   state,
   select,
@@ -42,12 +51,13 @@ const useBoundNames = computed(() =>
   Boolean(
     state.page?.currentUserWecomBound &&
     props.api.getBoundNameComponentConfig &&
-    !/MicroMessenger/i.test(globalThis.navigator.userAgent)
+    !/MicroMessenger/i.test(globalThis.navigator.userAgent),
   ),
 );
 const namesMounted = ref(false),
   nameStage = ref<NameRenderStatus["stage"]>();
 const contactTable = ref<globalThis.HTMLElement>();
+const instanceLoaded = ref(false);
 let binding: globalThis.AbortController | undefined;
 let renewal: ReturnType<typeof globalThis.setTimeout> | undefined;
 function stopNames() {
@@ -60,6 +70,7 @@ watch(
   () => [state.page, state.cursor, state.loading] as const,
   async ([page, cursor, loading]) => {
     stopNames();
+    if (page) instanceLoaded.value = true;
     if (!names) return;
     if (loading) {
       names.suspend();
@@ -79,7 +90,11 @@ watch(
     if (saved && saved.returnPath === globalThis.location.pathname)
       await names.resume(saved);
     else if (names.state.operation) await names.query();
-    else if (useBoundNames.value && page.items.length && !names.state.pendingCreate)
+    else if (
+      useBoundNames.value &&
+      page.items.length &&
+      !names.state.pendingCreate
+    )
       await names.loadBoundConfig();
   },
   { flush: "sync" },
@@ -115,9 +130,12 @@ watch(
           // while the request is in flight and each replacement rechecks the PC session.
           const remaining = config.expiresAt - Date.now();
           const lead = Math.min(10000, remaining / 4);
-          renewal = globalThis.setTimeout(() => {
-            if (!current.signal.aborted) void names.loadBoundConfig(config);
-          }, Math.max(1000, remaining - lead));
+          renewal = globalThis.setTimeout(
+            () => {
+              if (!current.signal.aborted) void names.loadBoundConfig(config);
+            },
+            Math.max(1000, remaining - lead),
+          );
         }
         if (
           [
@@ -168,18 +186,6 @@ onBeforeUnmount(() => {
   names?.dispose();
   globalThis.window.removeEventListener("message", receiveNameResult);
 });
-const availability = {
-  available: "可获取",
-  not_authorized: "未获准",
-  not_returned: "未返回",
-  pending_verification: "待核对",
-};
-const relation = {
-  active: "当前可访问",
-  departed: "已确认离职",
-  inaccessible: "当前不可访问",
-  pending_verification: "待核对",
-};
 const phases = {
   planned: "等待同步",
   running: "同步中",
@@ -207,16 +213,22 @@ onMounted(() => void select(props.workspaceId, props.instanceId));
 onBeforeUnmount(dispose);
 </script>
 <template>
-  <section class="intro">
-    <h1>内部联系人</h1>
-    <p>仅展示当前空间此企微实例允许访问的资料。联系人不自动成为 Maia 成员。</p>
-    <div class="context">
-      <span class="pill">企微实例 {{ instanceId }}</span>
-      <span v-if="state.page?.currentUserWecomBound && state.page.accessState === 'active'">
-        当前 Maia 用户已绑定企微身份
-      </span>
-    </div>
-  </section>
+  <header class="intro instance-context">
+    <button
+      type="button"
+      class="instance-back"
+      @click="emit('back')"
+    >
+      返回企微实例
+    </button>
+    <h1>企微实例</h1>
+    <p
+      v-if="instanceLoaded && !state.forbidden"
+      class="instance-reference muted"
+    >
+      实例编号 {{ instanceId }}
+    </p>
+  </header>
   <section
     class="panel"
     aria-labelledby="contacts-title"
@@ -224,7 +236,7 @@ onBeforeUnmount(dispose);
   >
     <div class="panel-heading terminal-heading">
       <h2 id="contacts-title">
-        当前授权范围
+        内部联系人
       </h2>
       <button
         v-if="!state.forbidden"
@@ -259,37 +271,33 @@ onBeforeUnmount(dispose);
         关联编号：{{ state.requestId }}
       </p>
     </div>
-    <div
-      v-if="state.page"
+    <p
+      v-if="state.page?.accessState === 'disabled'"
+      class="notice"
+      role="status"
+    >
+      此实例已停止访问。
+    </p>
+    <p
+      v-else-if="state.page?.accessState === 'pending_verification'"
+      class="notice"
+      role="status"
+    >
+      联系人暂不可查看，当前空列表不代表全量为零。
+    </p>
+    <p
+      v-else-if="state.page && !state.page.items.length"
       class="notice"
     >
-      <p
-        v-if="state.page.accessState !== 'active'"
-        role="status"
-      >
-        {{
-          state.page.accessState === "disabled"
-            ? "此实例已停止访问。"
-            : "授权范围待核对，当前空列表不代表全量为零。"
-        }}
-      </p>
-      <p
-        v-if="state.page.safeReason"
-        class="warning"
-      >
-        {{ reason(state.page.safeReason) }}
-      </p>
-      <p class="muted">
-        最近可信时间：{{ date(state.page.lastTrustedAt) }} · 范围版本：{{
-          state.page.scopeVersion
-        }}
-      </p>
-      <p v-if="!state.page.items.length && state.page.accessState === 'active'">
-        当前页暂无可展示的联系人。请核对同步覆盖，或刷新当前范围。
-      </p>
-    </div>
+      当前页暂无可展示的联系人。
+    </p>
     <div
-      v-if="names && state.page?.accessState === 'active'"
+      v-if="
+        names &&
+          state.page?.accessState === 'active' &&
+          state.page.items.length &&
+          !namesMounted
+      "
       class="notice"
     >
       <p role="status">
@@ -297,17 +305,20 @@ onBeforeUnmount(dispose);
           names.state.message ??
             (names.state.busy
               ? "正在核对姓名展示资格…"
-              : namesMounted
-                ? "官方组件已绑定，实际姓名请本人核对；成员标识不能代表姓名。"
+              : nameStage === "browser_session_unavailable"
+                ? "当前浏览器的企微姓名展示会话未通过核验。"
                 : useBoundNames
-                  ? nameStage === "browser_session_unavailable"
-                    ? "当前浏览器的企微姓名展示会话未通过核验。"
-                    : "姓名暂不可展示。"
+                  ? "姓名暂不可展示。"
                   : "姓名暂不可展示，可授权当前企业的姓名展示。")
         }}
       </p>
       <p
-        v-if="nameStage && !['bound', 'update', 'browser_session_unavailable'].includes(nameStage)"
+        v-if="
+          nameStage &&
+            !['bound', 'update', 'browser_session_unavailable'].includes(
+              nameStage,
+            )
+        "
         class="muted"
       >
         {{
@@ -320,11 +331,19 @@ onBeforeUnmount(dispose);
       </p>
       <div class="terminal-actions">
         <button
-          v-if="!names.state.operation && (!useBoundNames || (!names.state.busy && (!names.state.config || nameStage === 'browser_session_unavailable')))"
+          v-if="
+            !names.state.operation &&
+              (!useBoundNames ||
+                (!names.state.busy &&
+                  (!names.state.config ||
+                    nameStage === 'browser_session_unavailable')))
+          "
           :disabled="names.state.busy || names.state.blocked"
           @click="authorizeNames"
         >
-          {{ names.state.pendingCreate ? "核对原姓名发起请求" : "授权姓名展示" }}
+          {{
+            names.state.pendingCreate ? "核对原姓名发起请求" : "授权姓名展示"
+          }}
         </button>
         <button
           v-if="names.state.pendingCreate"
@@ -382,35 +401,28 @@ onBeforeUnmount(dispose);
           刷新页面恢复姓名展示
         </button>
       </div>
-      <p class="muted">
-        姓名展示受限不改变联系人同步结果或实例归属。
-      </p>
     </div>
     <div
       v-if="state.page?.items.length"
       ref="contactTable"
       class="table-scroll"
-      tabindex="0"
       role="region"
-      aria-label="联系人资料，可横向滚动"
+      aria-label="联系人资料"
     >
-      <table class="contacts-table">
+      <table class="directory-table">
         <thead>
           <tr>
-            <th scope="col">
-              姓名展示
+            <th
+              scope="col"
+              class="avatar-column"
+            >
+              头像
             </th>
             <th scope="col">
-              成员标识（来源命名空间）
+              姓名
             </th>
             <th scope="col">
               职位
-            </th>
-            <th scope="col">
-              头像资料
-            </th>
-            <th scope="col">
-              访问状态与可信时间
             </th>
           </tr>
         </thead>
@@ -420,6 +432,15 @@ onBeforeUnmount(dispose);
             :key="contact.id"
             :data-contact-id="contact.id"
           >
+            <td>
+              <ContactAvatar
+                :url="
+                  contact.avatarAvailability === 'available'
+                    ? contact.avatarUrl
+                    : null
+                "
+              />
+            </td>
             <td>
               <slot
                 name="contact-name"
@@ -440,35 +461,26 @@ onBeforeUnmount(dispose);
               </slot>
             </td>
             <td>
-              {{ contact.sourceId }}<br><span class="muted">{{
-                contact.sourceNamespace
-              }}</span>
-            </td>
-            <td>
-              {{
-                contact.positionAvailability === "available"
-                  ? (contact.position ?? "未返回")
-                  : availability[contact.positionAvailability]
-              }}
-            </td>
-            <td>{{ availability[contact.avatarAvailability] }}</td>
-            <td>
-              {{ relation[contact.state] }}<br><span class="muted">{{
-                date(contact.lastTrustedAt)
-              }}</span>
-              <p
-                v-if="contact.safeReason"
-                class="muted"
+              <template
+                v-if="
+                  contact.positionAvailability === 'available' &&
+                    contact.position
+                "
               >
-                {{ reason(contact.safeReason) }}
-              </p>
+                {{ contact.position }}
+              </template>
+              <span
+                v-else
+                class="muted"
+                aria-label="暂无职位"
+              >—</span>
             </td>
           </tr>
         </tbody>
       </table>
     </div>
     <div
-      v-if="state.page"
+      v-if="state.page && (state.cursor || state.page.nextCursor)"
       class="notice terminal-actions"
     >
       <button
@@ -486,79 +498,175 @@ onBeforeUnmount(dispose);
       </button>
     </div>
   </section>
-  <section
+  <details
     v-if="!state.forbidden"
-    class="panel feature-section"
-    aria-labelledby="sync-title"
-    :aria-busy="state.syncing"
+    class="panel feature-section directory-maintenance"
   >
-    <div class="panel-heading terminal-heading">
-      <h2 id="sync-title">
-        联系人同步
-      </h2>
-      <button
-        v-if="canRequestSync() && !state.unknownSync"
-        :disabled="
-          state.syncing ||
-            state.loading ||
-            ['planned', 'running'].includes(state.sync?.phase ?? '')
-        "
-        @click="requestSync()"
-      >
-        补同步当前范围
-      </button>
-    </div>
-    <div class="notice">
+    <summary>维护与同步</summary>
+    <div
+      v-if="state.page"
+      class="notice"
+    >
+      <h2>授权与诊断</h2>
       <p
-        v-if="state.syncing"
-        role="status"
+        v-if="
+          state.page.currentUserWecomBound &&
+            state.page.accessState === 'active'
+        "
       >
-        正在核对同步结果…
+        当前 Maia 用户已绑定企微身份
       </p>
-      <template v-if="state.sync">
-        <h3>{{ phases[state.sync.phase] }}</h3>
-        <p>{{ coverage[state.sync.coverage] }}</p>
-        <p v-if="state.sync.safeReason">
-          {{ reason(state.sync.safeReason) }}
-        </p>
-        <p class="muted">
-          最近可信时间：{{ date(state.sync.lastTrustedAt) }}
-        </p>
-        <div>
-          <button
-            :disabled="state.syncing"
-            @click="querySync()"
-          >
-            查询原同步
-          </button>
-        </div>
-      </template>
-      <p v-else>
-        尚未读取到可信同步记录，不能据此认定全量已完成。
+      <p>
+        {{
+          state.page.accessState === "active"
+            ? "当前授权范围已核实"
+            : state.page.accessState === "disabled"
+              ? "此实例已停止访问"
+              : "当前授权范围待核对"
+        }}
       </p>
-      <div
-        v-if="state.syncMessage"
-        role="alert"
-      >
-        <p>{{ state.syncMessage }}</p>
-        <p
-          v-if="state.requestId"
-          class="muted"
-        >
-          关联编号：{{ state.requestId }}
-        </p>
-      </div>
-      <div v-if="state.unknownSync">
+      <p v-if="state.page.safeReason">
+        {{ reason(state.page.safeReason) }}
+      </p>
+      <p class="muted">
+        最近可信时间 {{ date(state.page.lastTrustedAt) }} · 范围版本
+        {{ state.page.scopeVersion }}
+      </p>
+    </div>
+    <section
+      aria-labelledby="sync-title"
+      :aria-busy="state.syncing"
+    >
+      <div class="panel-heading terminal-heading">
+        <h2 id="sync-title">
+          联系人同步
+        </h2>
         <button
-          :disabled="state.syncing"
-          @click="retrySync()"
+          v-if="canRequestSync() && !state.unknownSync"
+          :disabled="
+            state.syncing ||
+              state.loading ||
+              ['planned', 'running'].includes(state.sync?.phase ?? '')
+          "
+          @click="requestSync()"
         >
-          核对原同步请求
+          补同步当前范围
         </button>
       </div>
-      <p class="muted">
-        同步、官方姓名展示、存档和终端条件分别核对。
-      </p>
-    </div>
-  </section>
+      <div class="notice">
+        <p
+          v-if="state.syncing"
+          role="status"
+        >
+          正在核对同步结果…
+        </p>
+        <template v-if="state.sync">
+          <h3>{{ phases[state.sync.phase] }}</h3>
+          <p>{{ coverage[state.sync.coverage] }}</p>
+          <p v-if="state.sync.safeReason">
+            {{ reason(state.sync.safeReason) }}
+          </p>
+          <p class="muted">
+            最近可信时间：{{ date(state.sync.lastTrustedAt) }}
+          </p>
+          <div>
+            <button
+              :disabled="state.syncing"
+              @click="querySync()"
+            >
+              查询原同步
+            </button>
+          </div>
+        </template>
+        <p v-else>
+          尚未读取到可信同步记录，不能据此认定全量已完成。
+        </p>
+        <div
+          v-if="state.syncMessage"
+          role="alert"
+        >
+          <p>{{ state.syncMessage }}</p>
+          <p
+            v-if="state.requestId"
+            class="muted"
+          >
+            关联编号：{{ state.requestId }}
+          </p>
+        </div>
+        <div v-if="state.unknownSync">
+          <button
+            :disabled="state.syncing"
+            @click="retrySync()"
+          >
+            核对原同步请求
+          </button>
+        </div>
+      </div>
+    </section>
+  </details>
 </template>
+
+<style scoped>
+.instance-context {
+  display: grid;
+  justify-items: start;
+  align-content: start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+.instance-context h1 {
+  font-family: var(--font-body);
+  font-size: var(--text-section);
+}
+
+.instance-reference {
+  margin-top: var(--space-0);
+  overflow-wrap: anywhere;
+}
+
+#contacts-title {
+  font-family: var(--font-heading);
+  font-size: var(--text-title);
+}
+
+.instance-back {
+  padding: var(--space-1) var(--space-2);
+  margin-inline-start: calc(-1 * var(--space-2));
+  border-color: transparent;
+  background: transparent;
+}
+
+.directory-table .avatar-column {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.directory-table th,
+.directory-table td {
+  vertical-align: middle;
+}
+
+.directory-maintenance > summary {
+  padding: var(--space-3) var(--space-6);
+  color: var(--color-action);
+  cursor: pointer;
+  font-weight: var(--weight-medium);
+}
+
+.directory-maintenance > summary:focus-visible {
+  outline-offset: calc(-1 * var(--focus-offset));
+}
+
+.directory-maintenance[open] > summary {
+  border-bottom: var(--line-thin) solid var(--color-line);
+}
+
+@media (max-width: 40rem) {
+  .directory-maintenance > summary {
+    padding-inline: var(--space-5);
+  }
+}
+</style>

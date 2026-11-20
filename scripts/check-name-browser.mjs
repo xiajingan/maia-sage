@@ -7,6 +7,11 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "vite";
+async function openMaintenance(page) {
+  const details = page.locator("details").filter({ hasText: "维护与同步" });
+  if ((await details.getAttribute("open")) === null)
+    await details.locator("summary").click();
+}
 const outDir = await mkdtemp(join(tmpdir(), "sage-name-browser-"));
 execFileSync(
   "openssl",
@@ -413,9 +418,6 @@ try {
   phases.pop()();
   sdkGate = undefined;
   await expect(page.locator("ww-open-data")).toHaveCount(1);
-  await expect(
-    page.getByText("官方组件已绑定", { exact: false }),
-  ).toBeVisible();
   assert.deepEqual(await page.evaluate(() => globalThis.__syntheticStages), [
     "agentConfig",
     "checkSession",
@@ -468,6 +470,7 @@ try {
   });
   await page.evaluate(() => globalThis.__syntheticEvents.error());
   await expect(page.locator("ww-open-data")).toHaveCount(0);
+  await openMaintenance(page);
   await expect(page.getByRole("heading", { name: "同步已完成" })).toBeVisible();
   await button("核对原姓名授权").click();
   await expect(page.locator("ww-open-data")).toHaveCount(1);
@@ -516,6 +519,7 @@ try {
       await expect(page.locator("ww-open-data")).toHaveCount(1);
       await expect(page.locator("ww-open-data")).toHaveCount(0);
     }
+    await openMaintenance(page);
     await expect(
       page.getByRole("heading", { name: "同步已完成" }),
     ).toBeVisible();
@@ -533,9 +537,10 @@ try {
     mode = scenario;
     const fresh = await context.newPage();
     await fresh.goto(origin + path);
-    await expect(
-      fresh.getByText("当前 Maia 用户已绑定企微身份", { exact: true }),
-    ).toBeVisible();
+    const identityStatus = fresh.getByText("当前 Maia 用户已绑定企微身份", { exact: true });
+    await expect(identityStatus).toBeHidden();
+    await openMaintenance(fresh);
+    await expect(identityStatus).toBeVisible();
     if (scenario === "bound-active") {
       await expect(
         fresh.getByRole("cell", { name: "合成成员甲", exact: true }),
