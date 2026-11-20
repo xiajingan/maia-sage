@@ -166,6 +166,9 @@ try {
     queryReads = 0,
     syncPosts = 0,
     instancesEmpty = true;
+  let instancePage;
+  let replacementReads = 0;
+  const replacement = { ...operation, operationId: "15" };
   const syncKeys = [];
   let holdContacts;
   let waitingContacts;
@@ -190,7 +193,7 @@ try {
       return mode === "instance-error"
         ? route.fulfill({ status: 503, json: safeError })
         : route.fulfill({
-            json: { items: instancesEmpty ? [] : [instance], nextCursor: null },
+            json: instancePage ?? { items: instancesEmpty ? [] : [instance], nextCursor: null },
           });
     }
     if (
@@ -209,6 +212,8 @@ try {
       });
     if (path.endsWith("/install-operations/10/recovery")) {
       recoverySourceReads.push(url.searchParams.get("clientRequestId"));
+      if (mode === "replacement-source-unavailable")
+        return route.fulfill({ status: 503, json: safeError });
       return route.fulfill({
         json: {
           sourceOperationId: "10",
@@ -248,6 +253,10 @@ try {
     }
     if (path.endsWith("/wecom/install-operations")) {
       installPosts++;
+      if (mode === "replacement") {
+        assert.equal(req.postDataJSON().mode, "admin");
+        return route.fulfill({ json: replacement });
+      }
       return route.fulfill({ json: operation });
     }
     if (path.endsWith("/install-operations/10/complete")) {
@@ -274,6 +283,10 @@ try {
         rowVersion: "6",
       });
       return route.fulfill({ json: hardOperation });
+    }
+    if (path.endsWith("/install-operations/15")) {
+      replacementReads++;
+      return route.fulfill({ json: replacement });
     }
     if (path.endsWith("/install-operations/13"))
       return route.fulfill({ json: hardOperation });
@@ -900,6 +913,72 @@ try {
         fullPage: true,
       });
     }
+    // Keep the disabled instance visible during an explicit replacement of an expired installation.
+    mode = "replacement";
+    sourceUnavailable = true;
+    Object.assign(operation, {
+      operationId: "10",
+      phase: "expired",
+      nextAction: "start_new",
+      launch: null,
+      instanceId: null,
+    });
+    const disabled = { ...instance, status: "disabled" };
+    instancePage = { items: [disabled], nextCursor: null };
+    const beforeReplacement = installPosts;
+    await page.goto(`${origin}/workspaces/1/wecom`);
+    await page.evaluate(() => sessionStorage.removeItem("sage.wecom.install"));
+    await page.reload();
+    await expect(card).toContainText("已停用");
+    await expect(button("管理员接入")).toHaveCount(0);
+    await page.goto(`${origin}/workspaces/1/wecom/install-operations/10`);
+    await expect(card).toContainText("已停用");
+    const prepare = button("准备重新发起");
+    await expect(prepare).toBeEnabled();
+    sourceUnavailable = false;
+    await button("查询原操作").click();
+    await expect(button("使用已保存结果重新核验管理员身份")).toBeVisible();
+    await expect(prepare).toHaveCount(0);
+    sourceUnavailable = true;
+    mode = "replacement-source-unavailable";
+    await button("查询原操作").click();
+    await expect(page.getByRole("alert")).toContainText("结果待核实");
+    await expect(prepare).toHaveCount(0);
+    mode = "replacement";
+    await button("查询原操作").click();
+    await expect(prepare).toBeEnabled();
+    mode = "instance-error";
+    await button("刷新实例").click();
+    await expect(page.getByRole("alert")).toContainText("上次读取");
+    await expect(prepare).toHaveCount(0);
+    mode = "replacement";
+    for (const incomplete of [
+      { items: [disabled, { ...instance, instanceId: "21" }], nextCursor: null },
+      { items: [{ ...instance, status: "pending_verification" }], nextCursor: null },
+      { items: [{ ...instance, status: "restricted" }], nextCursor: null },
+      { items: [disabled], nextCursor: "next" },
+    ]) {
+      instancePage = incomplete;
+      await button("刷新实例").click();
+      await expect(button("刷新实例")).toBeEnabled();
+      await expect(prepare).toHaveCount(0);
+    }
+    instancePage = { items: [disabled], nextCursor: null };
+    await button("刷新实例").click();
+    await prepare.click();
+    await expect(button("管理员接入")).toBeEnabled();
+    await expect(card).toContainText("已停用");
+    assert.equal(installPosts, beforeReplacement);
+    await button("管理员接入").click();
+    await expect(page).toHaveURL(`${origin}/workspaces/1/wecom/install-operations/15`);
+    const launch = page.getByRole("link", { name: "打开管理员授权入口", exact: true });
+    await expect(launch).toHaveAttribute("href", replacement.launch.url);
+    await button("查询原操作").click();
+    await expect.poll(() => replacementReads).toBe(1);
+    await expect(launch).toBeVisible();
+    await page.reload();
+    await expect(launch).toBeVisible();
+    assert.equal(installPosts, beforeReplacement + 1);
     assert.deepEqual(errors, []);
     console.log(
       `Chrome ${browser.version()} 合成企微页面、原操作/结果恢复、跨设备链接与到期清理、分页、同步未知、权限清理与原型状态通过；不代表真实企微安装或姓名验收`,

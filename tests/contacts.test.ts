@@ -2,6 +2,29 @@ import { afterEach, expect, test, vi } from "vitest";
 import { createContactPage } from "../src/features/contacts/contact-page";
 import { contacts, harness } from "./fixtures/wecom";
 afterEach(() => vi.restoreAllMocks());
+test("已证实范围变化后从首页重读，丢弃滞后的旧版本直至新范围可读", async () => {
+  let scopeVersion = "1";
+  const h = await harness(() => Response.json({ ...contacts, scopeVersion }));
+  const page = createContactPage(h);
+  await page.select("1", "20");
+  await page.refresh("page-two");
+  const recheck = page.refreshAfterScopeChange("1");
+  expect(page.state.page).toBeUndefined();
+  expect(page.state.cursor).toBeUndefined();
+  await recheck;
+  expect(new URL(h.requests.at(-1)!.url).searchParams.has("cursor")).toBe(
+    false,
+  );
+  expect(page.state.page).toBeUndefined();
+  expect(page.state.message).toContain("范围");
+  await page.refresh();
+  expect(page.state.page).toBeUndefined();
+  scopeVersion = "2";
+  await page.refresh();
+  expect(page.state.page?.scopeVersion).toBe("2");
+  page.dispose();
+});
+
 // TC-SAGE-003
 test("contact_partial_and_permissions", async () => {
   let deny = false;

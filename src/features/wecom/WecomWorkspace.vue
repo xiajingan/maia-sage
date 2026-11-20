@@ -21,14 +21,44 @@ const manager = computed(
 const inWorkspace = computed(
   () => props.session.state.session?.rootWorkspace.id === props.workspaceId,
 );
+const confirmedInstances = computed(() =>
+  !state.listBusy &&
+  !state.listError &&
+  !state.instanceCursor &&
+  !state.instances?.nextCursor
+    ? state.instances?.items
+    : undefined,
+);
+const onlyDisabledInstances = computed(() => {
+  const items = confirmedInstances.value;
+  return Boolean(items?.length && items.every((item) => item.status === "disabled"));
+});
 const canStartInstallation = computed(
   () =>
-    !state.listBusy &&
-    !state.listError &&
-    !state.instanceCursor &&
-    state.instances?.items.length === 0 &&
-    !state.instances.nextCursor,
+    confirmedInstances.value?.length === 0 ||
+    (onlyDisabledInstances.value &&
+      state.preparedFrom !== undefined &&
+      state.preparedFrom === props.operationId),
 );
+const canPrepareInstallation = computed(() => {
+  const op = state.operation;
+  if (
+    !manager.value ||
+    state.mustQuery ||
+    state.unknownRecovery ||
+    op?.nextAction !== "start_new" ||
+    state.source?.nextAction === "recover"
+  )
+    return false;
+  if (confirmedInstances.value?.length === 0) return true;
+  return (
+    onlyDisabledInstances.value &&
+    state.kind === "install" &&
+    op.phase === "expired" &&
+    state.source?.sourceOperationId === op.operationId &&
+    state.source.nextAction === "none"
+  );
+});
 const showInstallationPanel = computed(
   () =>
     canStartInstallation.value ||
@@ -86,11 +116,17 @@ const identityRound = computed(
     (state.kind === "recovery" ||
       state.operation.safeReason === "administrator_identity_required"),
 );
-const launchUrl = computed(() =>
-  identityRound.value || canStartInstallation.value
+const launchUrl = computed(() => {
+  const currentInstall =
+    onlyDisabledInstances.value &&
+    manager.value &&
+    state.kind === "install" &&
+    props.operationId !== undefined &&
+    props.operationId === state.operationId;
+  return identityRound.value || confirmedInstances.value?.length === 0 || currentInstall
     ? page.authorizationUrl()
-    : undefined,
-);
+    : undefined;
+});
 const memberLaunch = computed(() => launchUrl.value && identityRound.value);
 const canRecover = computed(
   () =>
@@ -242,12 +278,7 @@ onBeforeUnmount(page.dispose);
               核对原核验请求
             </button>
             <button
-              v-if="
-                state.operation.nextAction === 'start_new' &&
-                  canStartInstallation &&
-                  !canRecover &&
-                  !state.unknownRecovery
-              "
+              v-if="canPrepareInstallation"
               :disabled="state.busy"
               @click="page.newOperation()"
             >

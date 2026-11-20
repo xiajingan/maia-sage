@@ -120,9 +120,11 @@ export function handleNameResult(): NameReturn | undefined {
 export function createNameContextController({
   api,
   session,
+  onScopeChange,
 }: {
   api: NameApi;
   session: Session;
+  onScopeChange?: (previousVersion: string) => void;
 }) {
   const state = shallowReactive<{
     operation?: Operation;
@@ -299,13 +301,28 @@ export function createNameContextController({
     );
     return true;
   }
-  function applyConfig(config: NameComponentConfig, selected: NameSelection) {
+  function applyConfig(
+    config: NameComponentConfig,
+    selected: NameSelection,
+    previous?: NameComponentConfig,
+  ) {
     if (
       config.instanceId !== selected.instanceId ||
-      config.scopeVersion !== selected.scopeVersion ||
       config.pageUrl !== window.location.href ||
       config.expiresAt <= Date.now()
     )
+      throw new ApiFailure(403);
+    if (config.scopeVersion !== selected.scopeVersion) {
+      if (
+        previous &&
+        previous === state.config &&
+        "source" in previous &&
+        previous.source === "installation_binding"
+      )
+        onScopeChange?.(selected.scopeVersion);
+      throw new ApiFailure(403);
+    }
+    if (previous && config.expiresAt <= previous.expiresAt)
       throw new ApiFailure(403);
     state.config = config;
   }
@@ -330,9 +347,7 @@ export function createNameContextController({
           ),
         );
         if (!config || signal.aborted || !valid()) return;
-        if (previous && config.expiresAt <= previous.expiresAt)
-          throw new ApiFailure(403);
-        applyConfig(config, selected);
+        applyConfig(config, selected, previous);
       },
       () => {
         // An explicit browser authorization starts its own gated operation.

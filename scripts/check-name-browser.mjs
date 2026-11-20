@@ -107,7 +107,9 @@ try {
     queries = 0,
     creates = 0,
     sdkGate,
-    renewalGate;
+    renewalGate,
+    contactReadGate;
+  const automaticReads = [];
   const operation = () => ({
     operationId: "50",
     instanceId: "20",
@@ -248,6 +250,10 @@ try {
             recovery: "请核对权限",
           },
         });
+      if (mode === "bound-shrunk") {
+        automaticReads.push(url.searchParams.get("cursor"));
+        if (contactReadGate) await contactReadGate;
+      }
       data = {
         accessState: "active",
         safeReason: null,
@@ -257,11 +263,11 @@ try {
         items:
           mode === "empty"
             ? []
-            : mode.startsWith("bound-")
+            : mode.startsWith("bound-") && mode !== "bound-shrunk"
               ? [contact, { ...contact, id: "31", sourceId: "synthetic-b" }]
               : [contact],
         nextCursor: null,
-        scopeVersion: mode === "scope" ? "2" : "1",
+        scopeVersion: mode === "scope" || mode === "bound-shrunk" ? "2" : "1",
       };
     } else if (url.pathname.endsWith("/name-context-operations")) {
       creates++;
@@ -323,7 +329,7 @@ try {
         pageKey: "instance_contacts",
         pageUrl: origin + path,
         environment: "web",
-        scopeVersion: "1",
+        scopeVersion: mode === "bound-shrunk" ? "2" : "1",
         expiresAt:
           Date.now() +
           (mode === "expires" || mode === "bound-renewing" ? 1800 : 60000),
@@ -335,7 +341,7 @@ try {
         agentSignature: "b".repeat(40),
         references: [
           { contactId: "30", userId: "synthetic-userid", type: "userName" },
-          ...(bound
+          ...(bound && mode !== "bound-shrunk"
             ? [
                 {
                   contactId: "31",
@@ -537,7 +543,9 @@ try {
     mode = scenario;
     const fresh = await context.newPage();
     await fresh.goto(origin + path);
-    const identityStatus = fresh.getByText("当前 Maia 用户已绑定企微身份", { exact: true });
+    const identityStatus = fresh.getByText("当前 Maia 用户已绑定企微身份", {
+      exact: true,
+    });
     await expect(identityStatus).toBeHidden();
     await openMaintenance(fresh);
     await expect(identityStatus).toBeVisible();
@@ -594,6 +602,32 @@ try {
   assert.equal(creates, manualCreates);
   await returning.close();
   assert.equal(boundConfigRequests, 5);
+  // Renewal discovers a scope change while the original PC document is still open.
+  mode = "bound-renewing";
+  const shrunk = await context.newPage();
+  await shrunk.goto(origin + path);
+  await expect(shrunk.getByRole("cell", { name: "合成成员乙" })).toBeVisible();
+  const originalDocument = await shrunk.evaluate(() => globalThis.performance.timeOrigin);
+  let releaseContactRead;
+  contactReadGate = new Promise((resolve) => {
+    releaseContactRead = resolve;
+  });
+  mode = "bound-shrunk";
+  try {
+    await expect(shrunk.locator("tbody tr")).toHaveCount(0, { timeout: 5000 });
+    await expect.poll(() => automaticReads.length).toBe(1);
+  } finally {
+    contactReadGate = undefined;
+    releaseContactRead();
+  }
+  await expect(shrunk.getByRole("cell", { name: "合成成员甲" })).toBeVisible();
+  await expect(shrunk.locator("tbody tr")).toHaveCount(1);
+  assert.deepEqual(automaticReads, [null]);
+  assert.equal(
+    await shrunk.evaluate(() => globalThis.performance.timeOrigin),
+    originalDocument,
+  );
+  await shrunk.close();
   // A single PC document must renew a scoped configuration and recheck WeCom each time.
   mode = "bound-renewing";
   const recurring = await context.newPage();
@@ -625,6 +659,7 @@ try {
   mode = "bound-denied";
   await expect(recurring.getByText("请核对当前浏览器的企微企业")).toBeVisible();
   await expect(recurring.locator("ww-open-data")).toHaveCount(0);
+  await expect(recurring.locator("tbody tr")).toHaveCount(2);
   const stoppedAt = boundConfigRequests;
   await new Promise((resolve) => globalThis.setTimeout(resolve, 2000));
   assert.equal(
@@ -733,7 +768,7 @@ try {
       cookieRequests,
       boundConfigRequests,
       cases:
-        "popup close/reopen/source replacement, source/origin, no-code result, init-before-mount, error/update, scope/revocation, wrong corporation, expiry, missing loginSuite, empty/mobile, isolated browser, repeated bound renewal, expiry during pending renewal, cancellation, denied renewal and PC session loss",
+        "popup close/reopen/source replacement, source/origin, no-code result, init-before-mount, error/update, scope/revocation, wrong corporation, expiry, missing loginSuite, empty/mobile, isolated browser, repeated bound renewal, expiry during pending renewal, cancellation, denied renewal, PC session loss and contact reread on a verified scope change",
     }),
   );
 } finally {

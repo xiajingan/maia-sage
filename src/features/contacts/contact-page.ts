@@ -35,11 +35,13 @@ export function createContactPage({
     | undefined;
   let readGeneration = 0;
   let acceptedFactsGeneration = 0;
+  let invalidatedScopeVersion: string | undefined;
   function clear() {
     abort.abort();
     abort = new AbortController();
     readGeneration++;
     acceptedFactsGeneration++;
+    invalidatedScopeVersion = undefined;
     state.page = undefined;
     state.sync = undefined;
     state.loading = false;
@@ -119,6 +121,14 @@ export function createContactPage({
         factsGeneration !== acceptedFactsGeneration
       )
         return;
+      if (
+        result.accessState === "active" &&
+        result.scopeVersion === invalidatedScopeVersion
+      ) {
+        state.message =
+          "授权范围已变化，尚未取得更新后的联系人。请刷新联系人重试。";
+        return;
+      }
       acceptedFactsGeneration++;
       state.page =
         result.accessState === "active" ? result : { ...result, items: [] };
@@ -135,6 +145,15 @@ export function createContactPage({
       if (!signal.aborted && generation === readGeneration)
         state.loading = false;
     }
+  }
+  function refreshAfterScopeChange(previousVersion: string) {
+    if (!allowed() || state.page?.scopeVersion !== previousVersion) return;
+    invalidatedScopeVersion = previousVersion;
+    acceptedFactsGeneration++;
+    state.sync = undefined;
+    state.syncMessage = undefined;
+    // The old cursor belongs to the invalidated scope.
+    return refresh("");
   }
   function acceptSync(result: GetContactSyncResponse) {
     // Only an answer based on the still-current facts reaches this boundary.
@@ -243,6 +262,7 @@ export function createContactPage({
     state,
     select,
     refresh,
+    refreshAfterScopeChange,
     canRequestSync,
     requestSync,
     retrySync,

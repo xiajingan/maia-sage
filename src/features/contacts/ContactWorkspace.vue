@@ -30,6 +30,7 @@ const {
   state,
   select,
   refresh,
+  refreshAfterScopeChange,
   canRequestSync,
   requestSync,
   retrySync,
@@ -45,6 +46,7 @@ const names =
     ? createNameContextController({
         api: props.api as WecomApi & NameApi,
         session: props.session,
+        onScopeChange: refreshAfterScopeChange,
       })
     : undefined;
 const useBoundNames = computed(() =>

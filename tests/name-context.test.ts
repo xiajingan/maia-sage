@@ -34,6 +34,117 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+function pageConfig(scopeVersion: string) {
+  return {
+    instanceId: "20",
+    pageKey: "instance_contacts",
+    pageUrl: pageLocation.href,
+    environment: "web",
+    scopeVersion,
+    expiresAt: Date.now() + 60000,
+    corpId: "synthetic-corp",
+    agentId: "100",
+    nonceStr: "synthetic",
+    timestamp: Math.floor(Date.now() / 1000),
+    corpSignature: "a".repeat(40),
+    agentSignature: "b".repeat(40),
+    references: [],
+    nextCursor: null,
+  };
+}
+test.each([
+  { instanceId: "21" },
+  {
+    pageUrl: "https://localhost/workspaces/1/channel-app-instances/21/contacts",
+  },
+  { expiresAt: 1 },
+])(
+  "续签应答来自其他实例、其他页面或已过期时不可使联系人范围失效 %o",
+  async (invalid) => {
+    vi.stubGlobal("window", { location: pageLocation });
+    const first = { source: "installation_binding", ...pageConfig("1") };
+    let response = first;
+    const h = await harness(() => Response.json(response));
+    const onScopeChange = vi.fn();
+    const names = createNameContextController({ ...h, onScopeChange });
+    names.select({ workspaceId: "1", instanceId: "20", scopeVersion: "1" });
+    await names.loadBoundConfig();
+    expect(names.state.config).toBeDefined();
+    response = { ...first, scopeVersion: "2", ...invalid };
+    await names.loadBoundConfig(names.state.config);
+    expect(names.state.config).toBeUndefined();
+    expect(names.state.message).toBeTruthy();
+    expect(onScopeChange).not.toHaveBeenCalled();
+    names.dispose();
+  },
+);
+
+test.each(["bound", "web", "member"] as const)(
+  "首次签名或显式授权 %s 的范围不符仅影响姓名",
+  async (environment) => {
+    vi.stubGlobal("window", { location: pageLocation });
+    const h = await harness((r) => {
+      if (r.method === "GET")
+        return Response.json({
+          ...operation,
+          environment,
+          phase: "completed",
+          nextAction: "use_component",
+        });
+      const config = pageConfig("2");
+      return Response.json(
+        environment === "bound"
+          ? { ...config, source: "installation_binding" }
+          : { ...config, environment, operationId: operation.operationId },
+      );
+    });
+    const onScopeChange = vi.fn();
+    const names = createNameContextController({ ...h, onScopeChange });
+    names.select({ workspaceId: "1", instanceId: "20", scopeVersion: "1" });
+    if (environment === "bound") await names.loadBoundConfig();
+    else
+      await names.resume({
+        operationId: operation.operationId,
+        instanceId: "20",
+        returnPath: pageLocation.pathname,
+        expiresAt: operation.expiresAt,
+      });
+    expect(h.requests.at(-1)?.url).toMatch(/name-component-config$/);
+    expect(names.state.config).toBeUndefined();
+    expect(names.state.message).toBeTruthy();
+    expect(onScopeChange).not.toHaveBeenCalled();
+    names.dispose();
+  },
+);
+
+test("切换实例后返回的旧续签不能使当前联系人范围失效", async () => {
+  vi.stubGlobal("window", { location: pageLocation });
+  let hold = false;
+  let finish!: (response: Response) => void;
+  const h = await harness(() =>
+    hold
+      ? new Promise<Response>((resolve) => {
+          finish = resolve;
+        })
+      : Response.json({ ...pageConfig("1"), source: "installation_binding" }),
+  );
+  const onScopeChange = vi.fn();
+  const names = createNameContextController({ ...h, onScopeChange });
+  names.select({ workspaceId: "1", instanceId: "20", scopeVersion: "1" });
+  await names.loadBoundConfig();
+  expect(names.state.config).toBeDefined();
+  hold = true;
+  const renewal = names.loadBoundConfig(names.state.config);
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  names.select({ workspaceId: "1", instanceId: "21", scopeVersion: "1" });
+  finish(Response.json({ ...pageConfig("2"), source: "installation_binding" }));
+  await renewal;
+  expect(names.state.config).toBeUndefined();
+  expect(names.state.message).toBeUndefined();
+  expect(onScopeChange).not.toHaveBeenCalled();
+  names.dispose();
+});
+
 // TC-SAGE-004
 test("popup_source_and_origin 错通知不领取，正确通知由原Bearer查询并完成", async () => {
   const h = await harness((request) =>

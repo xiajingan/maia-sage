@@ -59,6 +59,7 @@ export function createWecomPage({
     unknownStart: boolean;
     mustQuery: boolean;
     instanceCursor?: string;
+    preparedFrom?: string;
   }>({
     unknownRecovery: false,
     launchExpired: false,
@@ -128,6 +129,7 @@ export function createWecomPage({
     state.unknownStart = false;
     state.mustQuery = false;
     state.instanceCursor = undefined;
+    state.preparedFrom = undefined;
     listCursor = undefined;
     missingSavedOperation = undefined;
     needsListConfirmation = false;
@@ -618,24 +620,26 @@ export function createWecomPage({
       )(token, op.operationId, { rowVersion: op.rowVersion }, signal);
     });
   }
-  function newOperation() {
+  async function newOperation() {
+    const op = state.operation;
     if (
+      !allowed() ||
+      bound?.membership.role !== "manager" ||
       recoveryPending ||
       state.mustQuery ||
       state.source?.nextAction === "recover" ||
-      !["start_new"].includes(state.operation?.nextAction ?? "") ||
+      op?.nextAction !== "start_new" ||
       state.busy
     )
       return;
     clear();
-    state.operationId = undefined;
-    pending = undefined;
-    state.message = undefined;
+    state.preparedFrom = op.operationId;
     try {
       storage?.removeItem(STORAGE_KEY);
     } catch {
       /* Optional storage. */
     }
+    await refreshInstances();
   }
   async function refreshInstances(cursor: string | undefined = listCursor) {
     cursor = cursor || undefined;
