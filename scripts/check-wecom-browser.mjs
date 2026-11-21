@@ -102,8 +102,12 @@ try {
     launch: null,
     rowVersion: "5",
   };
+  const retriedInstall = { ...operation, operationId: "15" };
   let recoveryPosts = 0,
     sourceUnavailable = false;
+  let retrySourceOverride;
+  let instanceNextCursor = null;
+  const retryInstallBodies = [];
   const recoveryKeys = [];
   const completeBodies = [];
   const nextRecovery = { ...recovery, operationId: "12" };
@@ -164,6 +168,7 @@ try {
   let mode = "ready",
     installPosts = 0,
     queryReads = 0,
+    instanceReads = 0,
     syncPosts = 0,
     instancesEmpty = true;
   const syncKeys = [];
@@ -186,11 +191,15 @@ try {
     if (path.endsWith("/members"))
       return route.fulfill({ json: { items: [], nextCursor: null } });
     if (path.endsWith("/channel-app-instances")) {
+      instanceReads++;
       assert.equal(req.headers()["x-maia-wecom-binding"], "1");
       return mode === "instance-error"
         ? route.fulfill({ status: 503, json: safeError })
         : route.fulfill({
-            json: { items: instancesEmpty ? [] : [instance], nextCursor: null },
+            json: {
+              items: instancesEmpty ? [] : [instance],
+              nextCursor: instanceNextCursor,
+            },
           });
     }
     if (
@@ -209,10 +218,15 @@ try {
       });
     if (path.endsWith("/install-operations/10/recovery")) {
       recoverySourceReads.push(url.searchParams.get("clientRequestId"));
+      if (retrySourceOverride?.status)
+        return route.fulfill({
+          status: retrySourceOverride.status,
+          json: safeError,
+        });
       return route.fulfill({
         json: {
           sourceOperationId: "10",
-          rowVersion: "1",
+          rowVersion: sourceUnavailable ? operation.rowVersion : "1",
           nextAction: sourceUnavailable ? "none" : "recover",
           safeReason: sourceUnavailable ? "recovery_source_expired" : null,
           recovery:
@@ -220,6 +234,7 @@ try {
             url.searchParams.get("clientRequestId") === lostRoundKey
               ? nextRecovery
               : null,
+          ...retrySourceOverride,
         },
       });
     }
@@ -248,6 +263,15 @@ try {
     }
     if (path.endsWith("/wecom/install-operations")) {
       installPosts++;
+      if (mode.startsWith("retry-existing")) {
+        retryInstallBodies.push(req.postDataJSON());
+        if (mode === "retry-existing-lost")
+          return route.fulfill({
+            status: 503,
+            json: { ...safeError, code: "RESULT_UNKNOWN" },
+          });
+        return route.fulfill({ json: retriedInstall });
+      }
       return route.fulfill({ json: operation });
     }
     if (path.endsWith("/install-operations/10/complete")) {
@@ -277,6 +301,8 @@ try {
     }
     if (path.endsWith("/install-operations/13"))
       return route.fulfill({ json: hardOperation });
+    if (path.endsWith("/install-operations/15"))
+      return route.fulfill({ json: retriedInstall });
     if (path.endsWith("/install-operations/10")) {
       queryReads++;
       return mode === "operation-missing"
@@ -813,6 +839,137 @@ try {
     await expect(button("成员扫码接入")).toHaveCount(0);
     await expect(button("管理员接入")).toHaveCount(0);
     assert.equal(installPosts, postsBeforeList);
+    mode = "retry-existing";
+    sourceUnavailable = true;
+    Object.assign(operation, {
+      phase: "expired",
+      nextAction: "start_new",
+      safeReason: "operation_expired",
+      instanceId: null,
+      launch: null,
+    });
+    await page.goto(`${origin}/workspaces/1/wecom/install-operations/15`);
+    await expect(
+      page.getByRole("heading", { name: "等待企微授权" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "打开管理员授权入口" }),
+    ).toHaveCount(0);
+    await page.goto(`${origin}/workspaces/1/wecom/install-operations/10`);
+    await expect(card).toBeVisible();
+    await expect(button("准备重新发起")).toBeEnabled();
+    await expect(button("管理员接入")).toHaveCount(0);
+    const readsBeforePrepare = instanceReads;
+    await button("准备重新发起").click();
+    await expect(button("管理员接入")).toBeEnabled();
+    assert(instanceReads > readsBeforePrepare);
+    assert.equal(installPosts, postsBeforeList);
+    mode = "retry-existing-lost";
+    await button("管理员接入").click();
+    await expect(button("核对原发起请求")).toBeVisible();
+    assert.equal(installPosts, postsBeforeList + 1);
+    await page.reload();
+    await expect(button("核对原发起请求")).toBeVisible();
+    await expect(button("准备重新发起")).toHaveCount(0);
+    assert.equal(installPosts, postsBeforeList + 1);
+    await page.goto(`${origin}/workspaces/1/wecom/install-operations/13`);
+    await expect(button("核对原发起请求")).toBeVisible();
+    await expect(button("核对并完成接入")).toHaveCount(0);
+    await page.reload();
+    await expect(button("核对原发起请求")).toBeVisible();
+    assert.equal(installPosts, postsBeforeList + 1);
+    mode = "retry-existing";
+    await button("核对原发起请求").click();
+    await expect(page).toHaveURL(
+      `${origin}/workspaces/1/wecom/install-operations/15`,
+    );
+    const retryLaunch = page.getByRole("link", { name: "打开管理员授权入口" });
+    await expect(retryLaunch).toHaveAttribute(
+      "href",
+      retriedInstall.launch.url,
+    );
+    await expect(card).toBeVisible();
+    await page.reload();
+    await expect(retryLaunch).toBeVisible();
+    await button("查询原操作").click();
+    await expect(button("查询原操作")).toBeEnabled();
+    await expect(retryLaunch).toBeVisible();
+    const expiredRoute = `${origin}/workspaces/1/wecom/install-operations/10`;
+    await page.goto(expiredRoute);
+    await expect(page).toHaveURL(
+      `${origin}/workspaces/1/wecom/install-operations/15`,
+    );
+    await expect(retryLaunch).toBeVisible();
+    assert.equal(installPosts, postsBeforeList + 2);
+    assert.equal(retryInstallBodies.length, 2);
+    assert.deepEqual(retryInstallBodies[0], retryInstallBodies[1]);
+    await page.evaluate(() => sessionStorage.removeItem("sage.wecom.install"));
+    await button("企业微信接入").click();
+    await expect(card).toBeVisible();
+    await expect(button("管理员接入")).toHaveCount(0);
+    sourceUnavailable = false;
+    await page.goto(expiredRoute);
+    await expect(button("使用已保存结果重新核验管理员身份")).toBeVisible();
+    await expect(button("准备重新发起")).toHaveCount(0);
+    sourceUnavailable = true;
+    for (const override of [
+      { nextAction: "query_original" },
+      { safeReason: "recovery_installation_unresolved" },
+      { safeReason: "authorization_invalidation_pending" },
+      { sourceOperationId: "13" },
+      { rowVersion: "3" },
+      { status: 503 },
+    ]) {
+      retrySourceOverride = override;
+      await page.goto(expiredRoute);
+      await expect(card).toBeVisible();
+      await expect(button("准备重新发起")).toHaveCount(0);
+    }
+    retrySourceOverride = { status: 403 };
+    await page.goto(expiredRoute);
+    await expect(
+      page.getByRole("heading", { name: "无法访问此接入" }),
+    ).toBeVisible();
+    await expect(button("准备重新发起")).toHaveCount(0);
+    retrySourceOverride = undefined;
+    for (const status of ["disabled", "restricted", "pending_verification"]) {
+      instance.status = status;
+      await page.goto(expiredRoute);
+      await expect(card).toBeVisible();
+      await expect(button("准备重新发起")).toHaveCount(0);
+    }
+    instance.status = "active";
+    instanceNextCursor = "second";
+    await page.goto(expiredRoute);
+    await expect(card).toBeVisible();
+    await expect(button("准备重新发起")).toHaveCount(0);
+    instanceNextCursor = null;
+    mode = "instance-error";
+    await page.goto(expiredRoute);
+    await expect(page.getByRole("alert")).toContainText("暂时无法读取企微实例");
+    await expect(button("准备重新发起")).toHaveCount(0);
+    mode = "ready";
+    await page.goto(expiredRoute);
+    await expect(button("准备重新发起")).toBeEnabled();
+    await button("准备重新发起").click();
+    await expect(button("管理员接入")).toBeEnabled();
+    retrySourceOverride = { nextAction: "recover", safeReason: null };
+    await button("管理员接入").click();
+    await expect(page.getByRole("alert")).toContainText("请查询原操作");
+    await expect(button("管理员接入")).toHaveCount(0);
+    assert.equal(installPosts, postsBeforeList + 2);
+    await button("查询原操作").click();
+    await expect(button("使用已保存结果重新核验管理员身份")).toBeVisible();
+    retrySourceOverride = undefined;
+    await button("查询原操作").click();
+    await expect(button("准备重新发起")).toBeEnabled();
+    instance.status = "disabled";
+    await button("准备重新发起").click();
+    await expect(card).toContainText("已停用");
+    await expect(button("管理员接入")).toHaveCount(0);
+    instance.status = "active";
+    assert.equal(installPosts, postsBeforeList + 2);
+    await button("企业微信接入").click();
     instancesEmpty = true;
     mode = "ready";
     await button("刷新实例").click();
@@ -829,7 +986,7 @@ try {
     await expect(page).toHaveURL(
       `${origin}/workspaces/1/wecom/install-operations/11`,
     );
-    assert.equal(installPosts, postsBeforeList + 1);
+    assert.equal(installPosts, postsBeforeList + 3);
     await page.evaluate(() => sessionStorage.removeItem("sage.wecom.install"));
     await page.goto(`${origin}/workspaces/1/wecom/install-operations/11`);
     await expect(button("复制管理员身份核验链接")).toBeVisible();

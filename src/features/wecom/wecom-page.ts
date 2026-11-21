@@ -59,6 +59,7 @@ export function createWecomPage({
     unknownStart: boolean;
     mustQuery: boolean;
     instanceCursor?: string;
+    retrySourceId?: string;
   }>({
     unknownRecovery: false,
     launchExpired: false,
@@ -99,6 +100,7 @@ export function createWecomPage({
               : recoveryPending?.input.rowVersion,
           clientRequestId: createdRecoveryKey,
           mustQuery: state.mustQuery,
+          retrySourceId: state.retrySourceId,
         }),
       );
       return Boolean(storage);
@@ -128,6 +130,7 @@ export function createWecomPage({
     state.unknownStart = false;
     state.mustQuery = false;
     state.instanceCursor = undefined;
+    state.retrySourceId = undefined;
     listCursor = undefined;
     missingSavedOperation = undefined;
     needsListConfirmation = false;
@@ -158,12 +161,84 @@ export function createWecomPage({
       bound === session.state.session
     );
   }
+  function confirmedInstances() {
+    if (
+      state.listBusy ||
+      state.listError ||
+      state.instanceCursor ||
+      state.instances?.nextCursor
+    )
+      return;
+    return state.instances?.items;
+  }
+  function hasVerifiedActiveInstances(
+    items: ReturnType<typeof confirmedInstances>,
+  ) {
+    return Boolean(
+      items?.length &&
+      items.every(
+        (item) =>
+          item.workspaceId === bound?.rootWorkspace.id &&
+          item.status === "active" &&
+          item.scope.completeness === "verified",
+      ),
+    );
+  }
+  function canStartInstallation() {
+    const instances = confirmedInstances();
+    if (!state.retrySourceId) return instances?.length === 0;
+    return (
+      allowed() &&
+      bound?.membership.role === "manager" &&
+      state.operationId !== state.retrySourceId &&
+      hasVerifiedActiveInstances(instances)
+    );
+  }
+  function permitsExpiredRetry(
+    op: Operation,
+    source?: GetWecomInstallRecoverySourceResponse,
+  ) {
+    return (
+      !("sourceOperationId" in op) &&
+      op.phase === "expired" &&
+      op.nextAction === "start_new" &&
+      source?.sourceOperationId === op.operationId &&
+      source.rowVersion === op.rowVersion &&
+      source.nextAction === "none" &&
+      !source.recovery &&
+      (source.safeReason === "recovery_source_unavailable" ||
+        source.safeReason === "recovery_source_expired")
+    );
+  }
+  function canPrepareInstallation() {
+    const op = state.operation;
+    if (
+      !allowed() ||
+      bound?.membership.role !== "manager" ||
+      pending ||
+      recoveryPending ||
+      state.unknownRecovery ||
+      state.mustQuery ||
+      op?.nextAction !== "start_new" ||
+      (state.source && state.source.nextAction !== "none")
+    )
+      return false;
+    const instances = confirmedInstances();
+    if (instances?.length === 0) return true;
+    return (
+      hasVerifiedActiveInstances(instances) &&
+      state.kind === "install" &&
+      permitsExpiredRetry(op, state.source)
+    );
+  }
   function fail(error: unknown, list = false) {
     if (error instanceof ApiFailure && [403, 404].includes(error.status)) {
       const originalPending = pending;
       const originalOperation = state.mustQuery ? state.operationId : undefined;
+      const retrySourceId = state.retrySourceId;
       clear();
       pending = originalPending;
+      if (pending || originalOperation) state.retrySourceId = retrySourceId;
       state.unknownStart = Boolean(pending);
       state.operationId = originalOperation;
       state.mustQuery = Boolean(originalOperation);
@@ -225,6 +300,7 @@ export function createWecomPage({
         );
       if (state.kind === "recovery") {
         state.source = undefined;
+        state.retrySourceId = undefined;
         // Only this request's successful POST or exact-key lookup can settle it.
         if (recoveryPending && recoveryPending === resolvedRecovery) {
           createdRecoveryKey = recoveryPending.input.clientRequestId;
@@ -265,6 +341,46 @@ export function createWecomPage({
       if (!signal.aborted) state.busy = false;
     }
   }
+  async function confirmPreparedRetry(sourceId: string) {
+    const signal = abort.signal;
+    state.busy = true;
+    state.message = undefined;
+    function returnToOriginal() {
+      state.retrySourceId = undefined;
+      state.operationId = sourceId;
+      state.kind = "install";
+      state.mustQuery = true;
+      save();
+    }
+    try {
+      const op = await session.withAccess(signal, (token) =>
+        api.getWecomInstallOperation(token, sourceId, signal),
+      );
+      if (signal.aborted || !allowed()) return false;
+      if (
+        op?.operationId === sourceId &&
+        op.phase === "expired" &&
+        op.nextAction === "start_new"
+      ) {
+        const source = await session.withAccess(signal, (token) =>
+          api.getWecomInstallRecoverySource(token, sourceId, undefined, signal),
+        );
+        if (signal.aborted || !allowed()) return false;
+        if (permitsExpiredRetry(op, source) && canStartInstallation())
+          return true;
+      }
+      returnToOriginal();
+      state.message = "原操作条件有变化，请查询原操作。";
+    } catch (error) {
+      if (!signal.aborted && allowed()) {
+        returnToOriginal();
+        fail(error);
+      }
+    } finally {
+      if (!signal.aborted) state.busy = false;
+    }
+    return false;
+  }
   async function start(mode: StartInput["mode"]) {
     if (
       !allowed() ||
@@ -273,18 +389,37 @@ export function createWecomPage({
       session.state.session?.membership.role !== "manager" ||
       state.operationId ||
       recoveryPending ||
-      pending
+      pending ||
+      (state.retrySourceId && !canStartInstallation())
+    )
+      return;
+    const sourceId = state.retrySourceId;
+    if (
+      sourceId &&
+      (!(await confirmPreparedRetry(sourceId)) ||
+        sourceId !== state.retrySourceId ||
+        !canStartInstallation())
     )
       return;
     state.kind = "install";
     pending = { mode, clientRequestId: crypto.randomUUID() };
-    save();
+    if (!save() && state.retrySourceId) {
+      pending = undefined;
+      state.message = "无法保存原发起请求，请允许浏览器保存后重试。";
+      return;
+    }
     await retryStart();
   }
   async function retryStart() {
     const input = pending;
     const workspaceId = bound?.rootWorkspace.id;
-    if (!input || !workspaceId || state.operationId) return;
+    if (
+      !input ||
+      !workspaceId ||
+      state.operationId ||
+      (state.retrySourceId && !canStartInstallation())
+    )
+      return;
     await execute((token, signal) =>
       api.createWecomInstallOperation(token, workspaceId, input, signal),
     );
@@ -489,10 +624,12 @@ export function createWecomPage({
       const originalPending = pending;
       const originalRecovery = recoveryPending;
       const originalKind = state.kind;
+      const retrySourceId = state.retrySourceId;
       const originalOperation =
         state.mustQuery || originalRecovery ? state.operationId : undefined;
       clear();
       pending = originalPending;
+      if (pending) state.retrySourceId = retrySourceId;
       recoveryPending = originalRecovery;
       state.kind = originalKind;
       state.unknownRecovery = Boolean(originalRecovery);
@@ -517,8 +654,17 @@ export function createWecomPage({
         "workspaceId" in saved &&
         saved.workspaceId === bound.rootWorkspace.id
       ) {
+        const retrySourceId =
+          "retrySourceId" in saved &&
+          typeof saved.retrySourceId === "string" &&
+          Check(InstallViewSchema.properties.operationId, saved.retrySourceId)
+            ? saved.retrySourceId
+            : undefined;
+        const followsRetry = Boolean(id && id === retrySourceId);
         const matchingRoute =
-          !id || ("operationId" in saved && id === saved.operationId);
+          !id ||
+          ("operationId" in saved && id === saved.operationId) ||
+          followsRetry;
         if (
           matchingRoute &&
           "kind" in saved &&
@@ -560,9 +706,11 @@ export function createWecomPage({
         ) {
           if (
             (!id && !pending && !state.operationId) ||
-            id === saved.operationId
+            id === saved.operationId ||
+            followsRetry
           ) {
             state.operationId = saved.operationId;
+            if (state.kind === "install") state.retrySourceId = retrySourceId;
             // Legacy records cannot prove that no complete request was left unknown.
             state.mustQuery =
               state.mustQuery ||
@@ -570,8 +718,8 @@ export function createWecomPage({
             restoringKnownReference = !id && !state.mustQuery;
           }
         } else if (
-          !id &&
-          !state.operationId &&
+          ((!id && !state.operationId) ||
+            (retrySourceId && "kind" in saved && saved.kind === "install")) &&
           "pending" in saved &&
           saved.pending &&
           typeof saved.pending === "object" &&
@@ -582,6 +730,11 @@ export function createWecomPage({
           "mode" in saved.pending &&
           ["admin", "member"].includes(String(saved.pending.mode))
         ) {
+          state.operationId = undefined;
+          if (retrySourceId) {
+            state.kind = "install";
+            state.retrySourceId = retrySourceId;
+          }
           pending = {
             clientRequestId: saved.pending.clientRequestId,
             mode: saved.pending.mode as StartInput["mode"],
@@ -618,24 +771,19 @@ export function createWecomPage({
       )(token, op.operationId, { rowVersion: op.rowVersion }, signal);
     });
   }
-  function newOperation() {
-    if (
-      recoveryPending ||
-      state.mustQuery ||
-      state.source?.nextAction === "recover" ||
-      !["start_new"].includes(state.operation?.nextAction ?? "") ||
-      state.busy
-    )
-      return;
+  async function newOperation() {
+    if (state.busy || !canPrepareInstallation()) return;
+    const retrySourceId = state.instances?.items.length
+      ? state.operation?.operationId
+      : undefined;
     clear();
-    state.operationId = undefined;
-    pending = undefined;
-    state.message = undefined;
+    state.retrySourceId = retrySourceId;
     try {
       storage?.removeItem(STORAGE_KEY);
     } catch {
       /* Optional storage. */
     }
+    await refreshInstances();
   }
   async function refreshInstances(cursor: string | undefined = listCursor) {
     cursor = cursor || undefined;
@@ -684,6 +832,8 @@ export function createWecomPage({
   }
   return {
     state,
+    canStartInstallation,
+    canPrepareInstallation,
     start,
     retryStart,
     recover,

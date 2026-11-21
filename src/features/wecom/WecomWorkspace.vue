@@ -21,14 +21,7 @@ const manager = computed(
 const inWorkspace = computed(
   () => props.session.state.session?.rootWorkspace.id === props.workspaceId,
 );
-const canStartInstallation = computed(
-  () =>
-    !state.listBusy &&
-    !state.listError &&
-    !state.instanceCursor &&
-    state.instances?.items.length === 0 &&
-    !state.instances.nextCursor,
-);
+const canStartInstallation = computed(page.canStartInstallation);
 const showInstallationPanel = computed(
   () =>
     canStartInstallation.value ||
@@ -242,12 +235,7 @@ onBeforeUnmount(page.dispose);
               核对原核验请求
             </button>
             <button
-              v-if="
-                state.operation.nextAction === 'start_new' &&
-                  canStartInstallation &&
-                  !canRecover &&
-                  !state.unknownRecovery
-              "
+              v-if="page.canPrepareInstallation()"
               :disabled="state.busy"
               @click="page.newOperation()"
             >
@@ -334,6 +322,7 @@ onBeforeUnmount(page.dispose);
           <p>正在保留原发起请求，不会自动建立另一次接入。</p>
           <div>
             <button
+              v-if="!state.retrySourceId || canStartInstallation"
               :disabled="state.busy"
               @click="page.retryStart()"
             >
