@@ -5,6 +5,7 @@ import type {
 export type NameComponentConfig =
   GetNameComponentConfigResponse | GetBoundNameComponentConfigResponse;
 type NameSetupStep = "load" | "config" | "agentConfig" | "checkSession";
+type ConfigRejection = "signature" | "domain" | "permission" | "rejected";
 export type NameRenderStatus = {
   stage:
     | NameSetupStep
@@ -18,6 +19,7 @@ export type NameRenderStatus = {
     | "timeout"
     | "reload_required";
   failedAt?: NameSetupStep | "bind";
+  configIssue?: ConfigRejection | "timeout";
   realNameVerified: false;
 };
 type Callbacks = { success: () => void; fail: () => void };
@@ -32,7 +34,7 @@ interface Wx {
     jsApiList: string[];
   }): void;
   ready(callback: () => void): void;
-  error(callback: () => void): void;
+  error(callback: (response?: unknown) => void): void;
   agentConfig(
     input: Callbacks & {
       corpid: string;
@@ -96,6 +98,20 @@ export interface NameBinding {
   onStatus?(status: NameRenderStatus): void;
   sdk?: WecomSdk;
 }
+function classifyConfigRejection(response: unknown): ConfigRejection {
+  const message =
+    response &&
+    typeof response === "object" &&
+    "errMsg" in response &&
+    typeof response.errMsg === "string"
+      ? response.errMsg.slice(0, 200)
+      : "";
+  if (/\binvalid signature\b/i.test(message)) return "signature";
+  if (/\binvalid url domain\b/i.test(message)) return "domain";
+  if (/\b(?:permission denied|fail_nopermission)\b/i.test(message))
+    return "permission";
+  return "rejected";
+}
 // wx has global callbacks without an unregister API. Serialize init; an interrupted
 // config/agentConfig must reload before reusing that global SDK for another scope.
 let initializing = false;
@@ -108,14 +124,22 @@ export async function bindNames(
   let elements = binding.elements ?? [];
   let stage: NameRenderStatus["stage"] = "load";
   let stepInProgress: NonNullable<NameRenderStatus["failedAt"]> = "load";
+  let configRejection: ConfigRejection | undefined;
   const report = (
     next: NameRenderStatus["stage"],
     failedAt?: NameRenderStatus["failedAt"],
   ): NameRenderStatus => {
     stage = next;
+    const configIssue =
+      failedAt === "config"
+        ? next === "timeout"
+          ? "timeout"
+          : configRejection
+        : undefined;
     const status: NameRenderStatus = {
       stage,
       ...(failedAt ? { failedAt } : {}),
+      ...(configIssue ? { configIssue } : {}),
       realNameVerified: false,
     };
     if (!signal.aborted) binding.onStatus?.(status);
@@ -219,7 +243,10 @@ export async function bindNames(
           jsApiList: [],
         });
         sdk.wx.ready(callbacks.success);
-        sdk.wx.error(callbacks.fail);
+        sdk.wx.error((response) => {
+          configRejection = classifyConfigRejection(response);
+          callbacks.fail();
+        });
       });
     await step("agentConfig", (callbacks) =>
       sdk.wx.agentConfig({

@@ -149,11 +149,18 @@ try {
       url = new URL(request.url());
     if (url.origin === origin && !url.pathname.startsWith("/api/"))
       return route.continue();
-    if (url.hostname === "res.wx.qq.com")
+    if (url.hostname === "res.wx.qq.com") {
+      const configError =
+        mode === "member-corp-signature"
+          ? { errMsg: "config:invalid signature synthetic-provider-detail" }
+          : mode === "member-corp-rejection"
+            ? { errMsg: "config:fail synthetic-provider-detail" }
+            : undefined;
       return route.fulfill({
         contentType: "text/javascript; charset=utf-8",
-        body: `window.__syntheticStages=[];window.wx={config(){window.__syntheticStages.push('config')},ready(cb){${mode === "member-corp-signature" ? "" : "cb()"}},error(cb){${mode === "member-corp-signature" ? "cb('synthetic-provider-detail')" : ""}},agentConfig(input){window.__syntheticStages.push('agentConfig');window.__syntheticCorp=input.corpid;${mode === "member-agent-signature" ? "input.fail('synthetic-provider-detail')" : "input.success()"}}};`,
+        body: `window.__syntheticStages=[];window.wx={config(){window.__syntheticStages.push('config')},ready(cb){${configError ? "" : "cb()"}},error(cb){${configError ? `cb(${JSON.stringify(configError)})` : ""}},agentConfig(input){window.__syntheticStages.push('agentConfig');window.__syntheticCorp=input.corpid;${mode === "member-agent-signature" ? "input.fail('synthetic-provider-detail')" : "input.success()"}}};`,
       });
+    }
     if (url.pathname === "/wwopen/js/jwxwork-1.0.0.js") {
       const browserSession = {
         corporation:
@@ -749,7 +756,8 @@ try {
     ["member-no-reference", "此页尚未读取姓名授权结果。"],
     ["member-config-response", "姓名授权已完成，页面尚未取得组件配置。"],
     ["member-script", "企微姓名组件的脚本未能加载或初始化。"],
-    ["member-corp-signature", "企微姓名组件未能完成企业配置核验。"],
+    ["member-corp-signature", "企微拒绝了企业配置签名。"],
+    ["member-corp-rejection", "企微拒绝了企业配置，未返回可识别的原因。"],
     ["member-agent-signature", "企微姓名组件未能完成应用配置核验。"],
     ["member-session", "企微姓名组件的会话未通过核验。"],
     ["member-bind", "企微姓名组件未能绑定到当前联系人列表。"],

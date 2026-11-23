@@ -66,12 +66,20 @@ const memberFailureMessages = {
   checkSession: "企微姓名组件的会话未通过核验。",
   bind: "企微姓名组件未能绑定到当前联系人列表。",
 } satisfies Record<NonNullable<NameRenderStatus["failedAt"]>, string>;
+const configIssueMessages = {
+  signature: "企微拒绝了企业配置签名。",
+  domain: "企微未认可当前页面的可信域名。",
+  permission: "企微拒绝了企业配置权限。",
+  rejected: "企微拒绝了企业配置，未返回可识别的原因。",
+  timeout: "等待企微企业配置核验超时。",
+} satisfies Record<NonNullable<NameRenderStatus["configIssue"]>, string>;
 const memberNameStatus = computed(() => {
   if (!names || !/MicroMessenger/i.test(globalThis.navigator.userAgent))
     return undefined;
   const op = names.state.operation;
   if (op && op.environment !== "member") return undefined;
   const status = nameStatus.value;
+  if (status?.configIssue) return configIssueMessages[status.configIssue];
   if (status?.failedAt) return memberFailureMessages[status.failedAt];
   if (op?.phase === "completed" && !names.state.config)
     return names.state.busy

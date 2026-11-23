@@ -194,6 +194,31 @@ test("checkSession失败不得挂载，迟到update不能复活已清理元素",
   abort.abort();
 });
 
+test.each([
+  ["config:invalid signature", "signature"],
+  ["config:invalid url domain", "domain"],
+  ["config:permission denied", "permission"],
+  ["config:fail synthetic-provider-detail", "rejected"],
+])("企业配置拒绝保留有限分类 %s，且不调用应用配置", async (errMsg, issue) => {
+  vi.resetModules();
+  const { bindNames } = await import("../src/features/contacts/wecom-sdk");
+  const f = fixture();
+  f.sdk.wx.error = (reject) => {
+    reject({ errMsg });
+  };
+  const outcome = await bindNames(config, {
+    sdk: f.sdk,
+    signal: new AbortController().signal,
+  });
+  expect(outcome).toEqual({
+    stage: "reload_required",
+    failedAt: "config",
+    configIssue: issue,
+    realNameVerified: false,
+  });
+  expect(f.calls).toEqual(["config"]);
+});
+
 test("初始化中超时或卸载后晚ready不继续agentConfig，新scope要求刷新", async () => {
   vi.resetModules();
   const isolated = await import("../src/features/contacts/wecom-sdk");
@@ -207,7 +232,11 @@ test("初始化中超时或卸载后晚ready不继续agentConfig，新scope要�
     signal: abort.signal,
   });
   await vi.advanceTimersByTimeAsync(10001);
-  expect((await pending).stage).toBe("timeout");
+  expect(await pending).toMatchObject({
+    stage: "timeout",
+    failedAt: "config",
+    configIssue: "timeout",
+  });
   f.ready();
   await Promise.resolve();
   expect(f.calls).toEqual(["config"]);
