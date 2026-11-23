@@ -60,35 +60,64 @@ const scripts = [
   "https://res.wx.qq.com/open/js/jweixin-1.2.0.js",
   "https://open.work.weixin.qq.com/wwopen/js/jwxwork-1.0.0.js",
 ] as const;
+type OpenDataWindow = Window & { WWOpenData?: OpenData };
+const readOpenData = () => (window as OpenDataWindow).WWOpenData;
+function loadScript(src: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.referrerPolicy = "origin";
+    script.async = false;
+    const timer = setTimeout(() => {
+      script.remove();
+      reject(new Error("load"));
+    }, 10000);
+    script.onload = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    script.onerror = () => {
+      clearTimeout(timer);
+      script.remove();
+      reject(new Error("load"));
+    };
+    document.head.append(script);
+  });
+}
 let loaded: Promise<WecomSdk> | undefined;
 export function loadWecomSdk(): Promise<WecomSdk> {
   return (loaded ??= (async () => {
-    for (const src of scripts)
-      await new Promise<void>((resolve, reject) => {
-        const script = document.createElement("script");
-        script.src = src;
-        script.referrerPolicy = "origin";
-        script.async = false;
-        const timer = setTimeout(() => {
-          script.remove();
-          reject(new Error("load"));
-        }, 10000);
-        script.onload = () => {
-          clearTimeout(timer);
-          resolve();
-        };
-        script.onerror = () => {
-          clearTimeout(timer);
-          script.remove();
-          reject(new Error("load"));
-        };
-        document.head.append(script);
-      });
+    for (const src of scripts) await loadScript(src);
     const globals = window as unknown as { wx?: Wx; WWOpenData?: OpenData };
     if (!globals.wx || typeof globals.wx.agentConfig !== "function")
       throw new Error("load");
     return { wx: globals.wx, openData: () => globals.WWOpenData };
   })());
+}
+function usesNativeAndroidOpenData() {
+  const ua = globalThis.navigator?.userAgent ?? "";
+  const version = /\bwxwork\/(\d+)\.(\d+)\.(\d+)/i.exec(ua);
+  if (!/\bAndroid\b/i.test(ua) || !version) return false;
+  const major = Number(version[1]),
+    minor = Number(version[2]),
+    patch = Number(version[3]);
+  return major > 3 || (major === 3 && (minor > 0 || patch >= 24));
+}
+let handledRegistrationFailures: WeakSet<object> | undefined;
+function handleDetachedRegistrationFailure(reason: unknown) {
+  if (!reason || typeof reason !== "object") return;
+  if (!handledRegistrationFailures) {
+    const failures = new WeakSet<object>();
+    // SDK 2.4.4 also starts configuration from register() without returning its
+    // Promise. initOpenData observes the same failure. Only suppress that exact rejection.
+    window.addEventListener("unhandledrejection", (event) => {
+      const reason = event.reason as unknown;
+      if (reason && typeof reason === "object" && failures.delete(reason))
+        event.preventDefault();
+    });
+    handledRegistrationFailures = failures;
+  }
+  handledRegistrationFailures.add(reason);
 }
 export interface NameBinding {
   elements?: Element[];
@@ -116,6 +145,7 @@ function classifyConfigRejection(response: unknown): ConfigRejection {
 // config/agentConfig must reload before reusing that global SDK for another scope.
 let initializing = false;
 let uncertain = false;
+let nativeRegistrationStarted = false;
 export async function bindNames(
   input: NameComponentConfig,
   binding: NameBinding,
@@ -230,37 +260,67 @@ export async function bindNames(
   initializing = true;
   try {
     report("load");
-    const sdk = binding.sdk ?? (await loadWecomSdk());
-    if (input.environment === "member")
-      await step("config", (callbacks) => {
-        sdk.wx.config({
-          beta: true,
-          debug: false,
-          appId: input.corpId,
+    if (
+      !binding.sdk &&
+      input.environment === "member" &&
+      usesNativeAndroidOpenData()
+    ) {
+      // The official SDK caches agent configuration by URL, even if register
+      // receives a new signature for that URL. A fresh document clears the cache.
+      if (nativeRegistrationStarted) return report("reload_required");
+      const sdk = await import("@wecom/jssdk");
+      await loadScript(scripts[1]);
+      await step("agentConfig", ({ success, fail }) => {
+        nativeRegistrationStarted = true;
+        sdk.register({
+          corpId: input.corpId,
+          agentId: input.agentId,
+          onAgentConfigFail: handleDetachedRegistrationFailure,
+          getAgentConfigSignature: (url) => {
+            if (!current() || url !== input.pageUrl) throw new Error("invalid");
+            return {
+              timestamp: input.timestamp,
+              nonceStr: input.nonceStr,
+              signature: input.agentSignature,
+            };
+          },
+        });
+        void sdk.initOpenData().then(success, fail);
+      });
+      openData = readOpenData();
+    } else {
+      const sdk = binding.sdk ?? (await loadWecomSdk());
+      if (input.environment === "member")
+        await step("config", (callbacks) => {
+          sdk.wx.config({
+            beta: true,
+            debug: false,
+            appId: input.corpId,
+            nonceStr: input.nonceStr,
+            timestamp: input.timestamp,
+            signature: input.corpSignature,
+            jsApiList: [],
+          });
+          sdk.wx.ready(callbacks.success);
+          sdk.wx.error((response) => {
+            configRejection = classifyConfigRejection(response);
+            callbacks.fail();
+          });
+        });
+      await step("agentConfig", (callbacks) =>
+        sdk.wx.agentConfig({
+          ...callbacks,
+          corpid: input.corpId,
+          agentid: input.agentId,
           nonceStr: input.nonceStr,
           timestamp: input.timestamp,
-          signature: input.corpSignature,
+          signature: input.agentSignature,
           jsApiList: [],
-        });
-        sdk.wx.ready(callbacks.success);
-        sdk.wx.error((response) => {
-          configRejection = classifyConfigRejection(response);
-          callbacks.fail();
-        });
-      });
-    await step("agentConfig", (callbacks) =>
-      sdk.wx.agentConfig({
-        ...callbacks,
-        corpid: input.corpId,
-        agentid: input.agentId,
-        nonceStr: input.nonceStr,
-        timestamp: input.timestamp,
-        signature: input.agentSignature,
-        jsApiList: [],
-      }),
-    );
+        }),
+      );
+      openData = sdk.openData();
+    }
     stepInProgress = "bind";
-    openData = sdk.openData();
     if (!openData || typeof openData.bind !== "function")
       throw new Error("error");
     if (openData.checkSession || "source" in input)

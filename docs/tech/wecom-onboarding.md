@@ -86,6 +86,8 @@ sessionStorage 的 `sage.wecom.install` 既有安装分支保存 workspaceId、o
 
 `loadWecomSdk()` 只按官方91958顺序动态加载 jweixin-1.2.0.js 与 jwxwork-1.0.0.js，script保留 referrerpolicy=origin，不打包缓存官方脚本。`bindNames(config,binding)` 的 config 直接使用生成 NameComponentConfig，具名 NameBinding 只提供本页 mount/unmount/signal/安全状态回调；sdk 注入仅测试接缝，不从 runtime 或组件 props 接收外部实现。企微分支 wx.config 成功后 agentConfig；普通Web跳过config。agentConfig后才取 WWOpenData，存在checkSession时等待成功，成功后通过Vue v-if挂载、nextTick取本表元素并显式bind。列表更新先完成卸载再初始化，不让全局SDK自动把旧企业上下文用于新元素。
 
+Android 企微 3.0.24 及以上的成员上下文按官方 91958 的 npm 方式初始化。保留 `jwxwork-1.0.0.js` 的官方加载登记，动态加载锁定的 `@wecom/jssdk`，由 `ww.register` 和 `ww.initOpenData` 选择原生应用签名链路。签名回调只返回已经通过服务端核验、当前未过期且 URL 完全相同的短期应用签名。SDK 按 URL 缓存旧签名，当前文档只登记一次，重新核验或更换配置时须刷新页面。其他客户端沿用原初始化。新版 SDK 的注册会额外触发同一初始化失败 Promise，只在当前文档识别并屏蔽已被组件流程处理的同一个失败对象，其他异常按浏览器默认规则处理。应用核验失败时不挂载姓名组件。
+
 `WecomName` 只把服务端可信 userId/reference 交给 ww-open-data（type=userName、corpid）；不把open_userid自行兜底，不读取组件内容或事件载荷。姓名元素由Vue卸载，SDK适配器不直接删除Vue管理的节点，以保留重试时的插入锚点。只有这个官方标签被Vue识别为自定义元素。脚本load、config、agentConfig、checkSession、bound、update和失败阶段只产生有限枚举，所有状态的 realNameVerified 恒为false。update/ready/bound不是姓名正确性证明；未知ID可能显示原ID，界面请本人核对。
 
 企微客户端姓名展示按页面可确认的状态提示。尚未读取原授权结果时提示回到发起页面。已读到完成结果且尚未取得组件配置时提示核对原授权。组件启动失败按脚本、企业配置、应用配置、组件会话或列表绑定阶段提示。企业配置区分企微报告的签名、域名、权限拒绝、无法分类的拒绝和等待超时。阶段和有限原因仅供当前页面展示，沿用现有重新核对和刷新入口，SDK 原始错误和授权材料不进入提示、日志或存储。

@@ -25,6 +25,7 @@
     "check:name-recovery-browser": "node scripts/check-name-recovery-browser.mjs"
   },
   "dependencies": {
+    "@wecom/jssdk": "2.4.4",
     "jose": "6.2.13",
     "maia-mud-client": "file:vendor/maia-mud-client-0.7.0.tgz",
     "oidc-client-ts": "3.5.0",

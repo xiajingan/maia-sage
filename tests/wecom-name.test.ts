@@ -85,6 +85,75 @@ test("sdk_ready_is_not_real_name config完成后agentConfig，挂载后bind；up
   abort.abort();
 });
 
+test("新版 Android 企微通过官方 SDK 核验应用签名并挂载姓名组件", async () => {
+  vi.resetModules();
+  const f = fixture();
+  const nativeOpenData = {
+    initJSSDK: vi.fn(),
+    checkSession: ({ success }: { success: () => void }) => success(),
+    bind: vi.fn(),
+  };
+  const bridge = vi.fn(
+    (
+      method: string,
+      _params: unknown,
+      callback: (result: { err_msg: string }) => void,
+    ) => {
+      if (method === "wwapp.initWwOpenData")
+        nativeWindow.WWOpenData = nativeOpenData;
+      callback({ err_msg: method + ":ok" });
+    },
+  );
+  const nativeWindow = {
+    WWOpenData: undefined as typeof nativeOpenData | undefined,
+    WeixinSandBox: {},
+    WeixinJSBridge: { invoke: bridge },
+  };
+  const append = vi.fn((script: { onload: () => void }) => script.onload());
+  vi.stubGlobal("window", nativeWindow);
+  vi.stubGlobal("document", {
+    createElement: () => ({}),
+    head: { append },
+  });
+  vi.stubGlobal("navigator", {
+    userAgent: "Android MicroMessenger/8.0.1 wxwork/4.1.0",
+    platform: "Linux armv8l",
+  });
+  const { bindNames } = await import("../src/features/contacts/wecom-sdk");
+  const abort = new AbortController();
+  await expect(
+    bindNames(config, { elements: [f.element], signal: abort.signal }),
+  ).resolves.toEqual({ stage: "bound", realNameVerified: false });
+  expect(append).toHaveBeenCalledTimes(1);
+  expect(append.mock.calls[0]?.[0]).toMatchObject({
+    src: "https://open.work.weixin.qq.com/wwopen/js/jwxwork-1.0.0.js",
+    referrerPolicy: "origin",
+  });
+  expect(bridge.mock.calls.map(([method]) => method)).toEqual([
+    "agentConfig",
+    "wwapp.initWwOpenData",
+  ]);
+  expect(bridge.mock.calls[0]?.[1]).toMatchObject({
+    corpid: config.corpId,
+    agentid: config.agentId,
+    signature: config.agentSignature,
+  });
+  expect(nativeOpenData.initJSSDK).toHaveBeenCalledOnce();
+  expect(nativeOpenData.bind).toHaveBeenCalledWith(f.element);
+  abort.abort();
+  const refreshedConfig = { ...config, agentSignature: "c".repeat(40) };
+  const nextBinding = bindNames(refreshedConfig, {
+    elements: [f.element],
+    signal: new AbortController().signal,
+  });
+  await expect(nextBinding).resolves.toEqual({
+    stage: "reload_required",
+    realNameVerified: false,
+  });
+  expect(bridge).toHaveBeenCalledTimes(2);
+  expect(nativeOpenData.bind).toHaveBeenCalledTimes(1);
+});
+
 test("component_expired_or_wrong_corp 过期或不匹配企业不得绑定", async () => {
   const f = fixture(),
     abort = new AbortController();

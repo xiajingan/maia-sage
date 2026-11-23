@@ -81,7 +81,7 @@ try {
     if (url.hostname === "open.work.weixin.qq.com")
       return route.fulfill({
         contentType: "text/javascript",
-        body: "window.WWOpenData={checkSession(c){window.syntheticStages.push('checkSession');c.success()},bind(){window.syntheticStages.push('bind')},on(){},off(){}}",
+        body: "if(!window.WeixinSandBox)window.WWOpenData={checkSession(c){window.syntheticStages.push('checkSession');c.success()},bind(){window.syntheticStages.push('bind')},on(){},off(){}}",
       });
     assert.equal(
       url.origin,
@@ -424,13 +424,77 @@ try {
   ).toBeVisible();
   assert.equal(pendingPosts.length, 2);
   assert.deepEqual(pendingPosts[1], pendingPosts[0]);
+  mode = "success";
+  await page.addInitScript(() => {
+    Object.defineProperty(globalThis.navigator, "userAgent", {
+      value: "Android MicroMessenger/8.0.1 wxwork/4.1.0",
+    });
+    globalThis.syntheticStages = [];
+    globalThis.WeixinSandBox = {};
+    globalThis.WeixinJSBridge = {
+      invoke(method, params, callback) {
+        globalThis.syntheticStages.push(method);
+        if (method === "agentConfig") {
+          if (
+            params.corpid !== "synthetic-corp" ||
+            params.agentid !== "100" ||
+            params.signature !== "b".repeat(40)
+          )
+            throw new Error("Incorrect synthetic app signature");
+          if (sessionStorage.getItem("synthetic.reject-agent"))
+            return callback({ err_msg: "agentConfig:fail" });
+        }
+        if (method === "wwapp.initWwOpenData")
+          globalThis.WWOpenData = {
+            initJSSDK() {
+              globalThis.syntheticStages.push("initJSSDK");
+            },
+            bind() {
+              globalThis.syntheticStages.push("bind");
+            },
+          };
+        callback({ err_msg: method + ":ok" });
+      },
+    };
+  });
+  for (const reject of [false, true]) {
+    await page.evaluate(
+      ({ path, reject }) => {
+        sessionStorage.setItem(
+          "sage.wecom.name-return",
+          JSON.stringify({
+            operationId: "50",
+            instanceId: "20",
+            returnPath: path,
+            expiresAt: Date.now() + 240000,
+          }),
+        );
+        if (reject) sessionStorage.setItem("synthetic.reject-agent", "1");
+      },
+      { path: contactPath, reject },
+    );
+    await page.goto(origin + "/wecom/name-context-result?operationId=50");
+    await finish();
+    if (reject) {
+      await expect(page.getByText("企微姓名组件未能完成应用配置核验。")).toBeVisible();
+      await expect(page.locator("ww-open-data")).toHaveCount(0);
+    } else {
+      await expect(page.locator("ww-open-data")).toHaveCount(1);
+    }
+    assert.deepEqual(
+      await page.evaluate(() => globalThis.syntheticStages),
+      reject
+        ? ["agentConfig"]
+        : ["agentConfig", "wwapp.initWwOpenData", "initJSSDK", "bind"],
+    );
+  }
   assert.deepEqual(errors, []);
   console.log(
     JSON.stringify({
       result: "passed",
       syntheticOnly: true,
       cases:
-        "real main/PKCE/prompt=none/JWS/original-operation/member SDK sequence/reload/sid denial/login_required/state consumed/pending unknown navigation no replay explicit same-key query",
+        "real main/PKCE/prompt=none/JWS/original-operation/member SDK sequence/reload/sid denial/login_required/state consumed/pending unknown navigation no replay explicit same-key query/official Android SDK app signature and rejection",
     }),
   );
 } finally {

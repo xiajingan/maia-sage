@@ -219,6 +219,9 @@ importers:
 
   .:
     dependencies:
+      '@wecom/jssdk':
+        specifier: 2.4.4
+        version: 2.4.4
       jose:
         specifier: 6.2.13
         version: 6.2.13
@@ -632,6 +635,9 @@ packages:
 
   '@vue/shared@3.5.43':
     resolution: {integrity: sha512-uksS7YGMR5NZyr4JNq0Rp+QyLns0ueaz20KwzIPW9R0LH1Vnt4E+XUM29PNseEbf1www2gOuhuDi5AKOIXag9Q==}
+
+  '@wecom/jssdk@2.4.4':
+    resolution: {integrity: sha512-CoMxyTvlpR2sz+KC+0kfnbdJj19EjJg7HAU/52LUW6dPUDEvW3NV40LNhWUnvqFg49y3zJswyGVFeraDcKc0Kw==}
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -1606,6 +1612,8 @@ snapshots:
       '@vue/shared': 3.5.43
 
   '@vue/shared@3.5.43': {}
+
+  '@wecom/jssdk@2.4.4': {}
 
   acorn-jsx@5.3.2(acorn@8.19.0):
     dependencies:
