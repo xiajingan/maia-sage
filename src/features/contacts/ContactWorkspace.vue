@@ -57,7 +57,38 @@ const useBoundNames = computed(() =>
   ),
 );
 const namesMounted = ref(false),
-  nameStage = ref<NameRenderStatus["stage"]>();
+  nameStatus = ref<NameRenderStatus>();
+const nameStage = computed(() => nameStatus.value?.stage);
+const memberFailureMessages = {
+  load: "企微姓名组件的脚本未能加载或初始化。",
+  config: "企微姓名组件未能完成企业配置核验。",
+  agentConfig: "企微姓名组件未能完成应用配置核验。",
+  checkSession: "企微姓名组件的会话未通过核验。",
+  bind: "企微姓名组件未能绑定到当前联系人列表。",
+} satisfies Record<NonNullable<NameRenderStatus["failedAt"]>, string>;
+const memberNameStatus = computed(() => {
+  if (!names || !/MicroMessenger/i.test(globalThis.navigator.userAgent))
+    return undefined;
+  const op = names.state.operation;
+  if (op && op.environment !== "member") return undefined;
+  const status = nameStatus.value;
+  if (status?.failedAt) return memberFailureMessages[status.failedAt];
+  if (op?.phase === "completed" && !names.state.config)
+    return names.state.busy
+      ? "姓名授权已完成，正在核对并读取组件配置…"
+      : "姓名授权已完成，页面尚未取得组件配置。";
+  if (status?.stage === "reload_required")
+    return "请刷新当前页面，再核对企微姓名展示。";
+  if (
+    names.state.config &&
+    (!status ||
+      ["load", "config", "agentConfig", "checkSession"].includes(status.stage))
+  )
+    return "姓名授权已完成，正在准备企微姓名组件…";
+  if (!op && !names.state.busy && !names.state.pendingCreate)
+    return "此页尚未读取姓名授权结果。若已完成授权，请回到发起授权的页面核对。";
+  return undefined;
+});
 const contactTable = ref<globalThis.HTMLElement>();
 const instanceLoaded = ref(false);
 let binding: globalThis.AbortController | undefined;
@@ -105,7 +136,7 @@ watch(
   () => names?.state.config,
   async (config) => {
     stopNames();
-    nameStage.value = undefined;
+    nameStatus.value = undefined;
     if (!config) return;
     const current = new globalThis.AbortController();
     binding = current;
@@ -157,7 +188,7 @@ watch(
             if ("source" in config && names?.state.busy) names.suspend();
           }
         }
-        nameStage.value = status.stage;
+        nameStatus.value = status;
       },
     });
   },
@@ -305,6 +336,7 @@ onBeforeUnmount(dispose);
       <p role="status">
         {{
           names.state.message ??
+            memberNameStatus ??
             (names.state.busy
               ? "正在核对姓名展示资格…"
               : nameStage === "browser_session_unavailable"
@@ -315,8 +347,15 @@ onBeforeUnmount(dispose);
         }}
       </p>
       <p
+        v-if="names.state.message && memberNameStatus"
+        class="muted"
+      >
+        {{ memberNameStatus }}
+      </p>
+      <p
         v-if="
           nameStage &&
+            !memberNameStatus &&
             !['bound', 'update', 'browser_session_unavailable'].includes(
               nameStage,
             )

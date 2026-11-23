@@ -119,7 +119,7 @@ try {
     nextAction: "authorize",
     authorizationUrl:
       "https://login.work.weixin.qq.com/wwlogin/sso/login?login_type=ServiceApp&state=synthetic",
-    environment: "web",
+    environment: mode.startsWith("member-") ? "member" : "web",
     expiresAt: Date.now() + 300000,
   });
   const sync = {
@@ -152,17 +152,18 @@ try {
     if (url.hostname === "res.wx.qq.com")
       return route.fulfill({
         contentType: "text/javascript; charset=utf-8",
-        body: `window.__syntheticStages=[];window.wx={config(){window.__syntheticStages.push('config')},ready(cb){cb()},error(){},agentConfig(input){window.__syntheticStages.push('agentConfig');window.__syntheticCorp=input.corpid;input.success()}};`,
+        body: `window.__syntheticStages=[];window.wx={config(){window.__syntheticStages.push('config')},ready(cb){${mode === "member-corp-signature" ? "" : "cb()"}},error(cb){${mode === "member-corp-signature" ? "cb('synthetic-provider-detail')" : ""}},agentConfig(input){window.__syntheticStages.push('agentConfig');window.__syntheticCorp=input.corpid;${mode === "member-agent-signature" ? "input.fail('synthetic-provider-detail')" : "input.success()"}}};`,
       });
     if (url.pathname === "/wwopen/js/jwxwork-1.0.0.js") {
       const browserSession = {
         corporation:
-          mode === "bound-wrong-corp"
+          mode === "bound-wrong-corp" || mode === "member-session"
             ? "another-synthetic-corp"
             : "synthetic-corp",
         expiresAt: mode === "bound-expired" ? 1 : Date.now() + 60000,
       };
-      if (mode === "sdk-error") return route.abort();
+      if (mode === "sdk-error" || mode === "member-script")
+        return route.abort();
       if (sdkGate) await sdkGate;
       return route.fulfill({
         contentType: "text/javascript; charset=utf-8",
@@ -177,6 +178,7 @@ try {
             },
             bind(el) {
               if (!el.isConnected) throw Error('unmounted');
+              ${mode === "member-bind" ? "throw Error('synthetic-provider-detail');" : ""}
               window.__syntheticStages.push('bind');
               const shadow = el.shadowRoot || el.attachShadow({mode: 'open'});
               shadow.textContent = el.getAttribute('openid') === 'synthetic-userid-b' ? '合成成员乙' : '合成成员甲';
@@ -322,13 +324,25 @@ try {
           pageKey: "instance_contacts",
           limit: 20,
         });
-      } else bodies.push(request.postDataJSON());
+      } else {
+        bodies.push(request.postDataJSON());
+        if (mode === "member-config-response")
+          return route.fulfill({
+            status: 503,
+            json: {
+              code: "UNAVAILABLE",
+              message: "synthetic-provider-detail",
+              requestId: "synthetic",
+              recovery: "请核对原姓名授权。",
+            },
+          });
+      }
       data = {
         ...(bound ? { source: "installation_binding" } : { operationId: "50" }),
         instanceId: "20",
         pageKey: "instance_contacts",
         pageUrl: origin + path,
-        environment: "web",
+        environment: mode.startsWith("member-") ? "member" : "web",
         scopeVersion: mode === "bound-shrunk" ? "2" : "1",
         expiresAt:
           Date.now() +
@@ -607,7 +621,9 @@ try {
   const shrunk = await context.newPage();
   await shrunk.goto(origin + path);
   await expect(shrunk.getByRole("cell", { name: "合成成员乙" })).toBeVisible();
-  const originalDocument = await shrunk.evaluate(() => globalThis.performance.timeOrigin);
+  const originalDocument = await shrunk.evaluate(
+    () => globalThis.performance.timeOrigin,
+  );
   let releaseContactRead;
   contactReadGate = new Promise((resolve) => {
     releaseContactRead = resolve;
@@ -729,6 +745,51 @@ try {
   assert.equal(await detached.evaluate(() => sessionStorage.length), 0);
   await expect(detached.getByText("合成授权结果已通知原窗口")).toBeVisible();
   await isolated.close();
+  for (const [scenario, message, memberClient = true] of [
+    ["member-no-reference", "此页尚未读取姓名授权结果。"],
+    ["member-config-response", "姓名授权已完成，页面尚未取得组件配置。"],
+    ["member-script", "企微姓名组件的脚本未能加载或初始化。"],
+    ["member-corp-signature", "企微姓名组件未能完成企业配置核验。"],
+    ["member-agent-signature", "企微姓名组件未能完成应用配置核验。"],
+    ["member-session", "企微姓名组件的会话未通过核验。"],
+    ["member-bind", "企微姓名组件未能绑定到当前联系人列表。"],
+    ["member-config-response", "请核对原姓名授权。", false],
+  ]) {
+    mode = scenario;
+    const member = await context.newPage();
+    await member.addInitScript(
+      ({ path, hasReference, memberClient }) => {
+        if (memberClient)
+          Object.defineProperty(globalThis.navigator, "userAgent", {
+            value: "Android MicroMessenger wxwork",
+          });
+        if (hasReference && globalThis.location.pathname === path)
+          sessionStorage.setItem(
+            "sage.wecom.name-return",
+            JSON.stringify({
+              operationId: "50",
+              instanceId: "20",
+              returnPath: path,
+              expiresAt: Date.now() + 240000,
+            }),
+          );
+      },
+      { path, memberClient, hasReference: scenario !== "member-no-reference" },
+    );
+    await member.goto(origin + path);
+    await expect(member.getByText(message, { exact: false })).toBeVisible();
+    if (!memberClient)
+      await expect(
+        member.getByText("姓名授权已完成，页面尚未取得组件配置。", {
+          exact: false,
+        }),
+      ).toHaveCount(0);
+    await expect(
+      member.getByText("synthetic-provider-detail", { exact: false }),
+    ).toHaveCount(0);
+    await expect(member.locator("ww-open-data")).toHaveCount(0);
+    await member.close();
+  }
   await page.goto(origin + "/prototype");
   for (const state of [
     "ready",
@@ -768,7 +829,7 @@ try {
       cookieRequests,
       boundConfigRequests,
       cases:
-        "popup close/reopen/source replacement, source/origin, no-code result, init-before-mount, error/update, scope/revocation, wrong corporation, expiry, missing loginSuite, empty/mobile, isolated browser, repeated bound renewal, expiry during pending renewal, cancellation, denied renewal, PC session loss and contact reread on a verified scope change",
+        "popup close/reopen/source replacement, source/origin, no-code result, init-before-mount, error/update, scope/revocation, wrong corporation, expiry, missing loginSuite, empty/mobile, isolated browser, repeated bound renewal, expiry during pending renewal, cancellation, denied renewal, PC session loss, contact reread on a verified scope change and safe member failure-stage text",
     }),
   );
 } finally {

@@ -4,12 +4,10 @@ import type {
 } from "maia-mud-client";
 export type NameComponentConfig =
   GetNameComponentConfigResponse | GetBoundNameComponentConfigResponse;
+type NameSetupStep = "load" | "config" | "agentConfig" | "checkSession";
 export type NameRenderStatus = {
   stage:
-    | "load"
-    | "config"
-    | "agentConfig"
-    | "checkSession"
+    | NameSetupStep
     | "browser_session_unavailable"
     | "bound"
     | "update"
@@ -19,6 +17,7 @@ export type NameRenderStatus = {
     | "cancelled"
     | "timeout"
     | "reload_required";
+  failedAt?: NameSetupStep | "bind";
   realNameVerified: false;
 };
 type Callbacks = { success: () => void; fail: () => void };
@@ -108,9 +107,17 @@ export async function bindNames(
   const { signal } = binding;
   let elements = binding.elements ?? [];
   let stage: NameRenderStatus["stage"] = "load";
-  const report = (next: NameRenderStatus["stage"]): NameRenderStatus => {
+  let stepInProgress: NonNullable<NameRenderStatus["failedAt"]> = "load";
+  const report = (
+    next: NameRenderStatus["stage"],
+    failedAt?: NameRenderStatus["failedAt"],
+  ): NameRenderStatus => {
     stage = next;
-    const status: NameRenderStatus = { stage, realNameVerified: false };
+    const status: NameRenderStatus = {
+      stage,
+      ...(failedAt ? { failedAt } : {}),
+      realNameVerified: false,
+    };
     if (!signal.aborted) binding.onStatus?.(status);
     return status;
   };
@@ -147,7 +154,7 @@ export async function bindNames(
     }
   };
   const error = () => {
-    if (!signal.aborted && !retired) report("error");
+    if (!signal.aborted && !retired) report("error", "bind");
     cleanup();
   };
   function cleanup() {
@@ -165,11 +172,12 @@ export async function bindNames(
     else for (const element of elements) element.remove();
   }
   async function step(
-    next: NameRenderStatus["stage"],
+    next: Exclude<NameSetupStep, "load">,
     start: (callbacks: Callbacks) => void,
     failureReason = "error",
   ) {
     if (!current()) throw new Error(signal.aborted ? "cancelled" : "expired");
+    stepInProgress = next;
     report(next);
     await new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -224,6 +232,7 @@ export async function bindNames(
         jsApiList: [],
       }),
     );
+    stepInProgress = "bind";
     openData = sdk.openData();
     if (!openData || typeof openData.bind !== "function")
       throw new Error("error");
@@ -236,6 +245,7 @@ export async function bindNames(
         },
         "source" in input ? "browser_session_unavailable" : "error",
       );
+    stepInProgress = "bind";
     if (!current()) throw new Error("expired");
     // Old clients may lack on/off; only subscribe when both lifecycle operations exist.
     if (openData.on && openData.off) {
@@ -276,14 +286,13 @@ export async function bindNames(
     cleanup();
     const reason = failure instanceof Error ? failure.message : "error";
     if (interruptedGlobal && (reason === "error" || reason === "load"))
-      return report("reload_required");
+      return report("reload_required", stepInProgress);
+    if (reason === "cancelled" || reason === "expired") return report(reason);
     return report(
-      reason === "cancelled" ||
-        reason === "timeout" ||
-        reason === "expired" ||
-        reason === "browser_session_unavailable"
+      reason === "timeout" || reason === "browser_session_unavailable"
         ? reason
         : "error",
+      stepInProgress,
     );
   } finally {
     initializing = false;

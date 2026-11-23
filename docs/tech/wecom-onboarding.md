@@ -88,6 +88,8 @@ sessionStorage 的 `sage.wecom.install` 既有安装分支保存 workspaceId、o
 
 `WecomName` 只把服务端可信 userId/reference 交给 ww-open-data（type=userName、corpid）；不把open_userid自行兜底，不读取组件内容或事件载荷。姓名元素由Vue卸载，SDK适配器不直接删除Vue管理的节点，以保留重试时的插入锚点。只有这个官方标签被Vue识别为自定义元素。脚本load、config、agentConfig、checkSession、bound、update和失败阶段只产生有限枚举，所有状态的 realNameVerified 恒为false。update/ready/bound不是姓名正确性证明；未知ID可能显示原ID，界面请本人核对。
 
+企微客户端姓名展示按页面可确认的状态提示。尚未读取原授权结果时提示回到发起页面。已读到完成结果且尚未取得组件配置时提示核对原授权。组件启动失败按脚本、企业配置、应用配置、组件会话或列表绑定阶段提示。阶段仅供当前页面展示，沿用现有重新核对和刷新入口，SDK 原始错误和授权材料不进入新提示、日志或存储。
+
 监听在挂载前安装以覆盖自动bind，off可用才订阅on；error/过期/取消清理自身监听和定时器并请求v-if移除元素，迟到事件不复活内容。单次脚本加载及每次初始化调用最多10秒，短期配置过期即卸载，URL不匹配不绑定。官方wx.ready/error没有解除监听API，config/agentConfig中断或失败后全局身份不确定，本页不再初始化其他范围，提示刷新后重新核对原操作。没有跨页面保留已初始化企业的缓存；不会用SDK失败触发重新安装或修改联系人同步状态。
 
 ## SDK资源策略与验证边界

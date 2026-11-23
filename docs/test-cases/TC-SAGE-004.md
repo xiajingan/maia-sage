@@ -34,6 +34,8 @@ PC 合成绑定场景：真实 Vue 页面和客户端从联系人响应读取当
 
 ## 测试代码
 
+合成企微客户端覆盖原结果缺失、已完成授权却没有可用配置，以及脚本、企业配置、应用配置、组件会话和列表绑定失败。每个场景应显示对应安全提示，失败时页面无姓名组件节点，SDK 原始错误未显示。普通浏览器读取成员操作结果时沿用普通浏览器提示。
+
 - `tests/name-context.test.ts`：popup_source_and_origin、原关联、失权/迟到响应、分页/预算与同窗口恢复拒绝。
 - `tests/wecom-name.test.ts`：sdk_ready_is_not_real_name、component_expired_or_wrong_corp、Web/企微时序与卸载/超时/事件隔离。
 - `tests/oidc.test.ts`：same_window_prompt_none 及原state、nonce、returnPath、晚回调隔离。
