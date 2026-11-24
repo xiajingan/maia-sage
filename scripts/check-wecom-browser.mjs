@@ -103,6 +103,14 @@ try {
     rowVersion: "5",
   };
   const retriedInstall = { ...operation, operationId: "15" };
+  const memberInstall = {
+    ...operation,
+    operationId: "16",
+    launch: {
+      kind: "member",
+      url: "https://open.weixin.qq.com/connect/oauth2/authorize?state=synthetictest#wechat_redirect",
+    },
+  };
   let recoveryPosts = 0,
     sourceUnavailable = false;
   let retrySourceOverride;
@@ -262,6 +270,10 @@ try {
       return route.fulfill({ json: recovery });
     }
     if (path.endsWith("/wecom/install-operations")) {
+      if (req.postDataJSON().mode === "member") {
+        memberInstall.expiresAt = Date.now() + 4000;
+        return route.fulfill({ json: memberInstall });
+      }
       installPosts++;
       if (mode.startsWith("retry-existing")) {
         retryInstallBodies.push(req.postDataJSON());
@@ -303,6 +315,8 @@ try {
       return route.fulfill({ json: hardOperation });
     if (path.endsWith("/install-operations/15"))
       return route.fulfill({ json: retriedInstall });
+    if (path.endsWith("/install-operations/16"))
+      return route.fulfill({ json: memberInstall });
     if (path.endsWith("/install-operations/10")) {
       queryReads++;
       return mode === "operation-missing"
@@ -365,11 +379,48 @@ try {
     await expect(
       page.getByText("当前空间暂无企微实例。", { exact: false }),
     ).toBeVisible();
+    await button("成员扫码接入").click();
+    await expect(page).toHaveURL(
+      `${origin}/workspaces/1/wecom/install-operations/16`,
+    );
+    const memberCode = page.getByRole("img", { name: "成员授权二维码" });
+    await expect(memberCode).toBeVisible({ timeout: 2000 });
+    await expect(
+      page.getByRole("link", { name: "在企业微信内继续授权" }),
+    ).toHaveAttribute("href", memberInstall.launch.url);
+    await expect
+      .poll(() =>
+        memberCode.evaluate((canvas) => {
+          const pixels = canvas
+            .getContext("2d")
+            .getImageData(0, 0, canvas.width, canvas.height).data;
+          const shades = new Set();
+          for (let index = 0; index < pixels.length; index += 4)
+            if (pixels[index + 3] === 255) shades.add(pixels[index]);
+          return shades.has(0) && shades.has(255);
+        }),
+      )
+      .toBe(true);
+    const queriedMemberInstall = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname.endsWith("/install-operations/16"),
+    );
+    await button("查询原操作").click();
+    assert.equal((await queriedMemberInstall).status(), 200);
+    await expect(memberCode).toBeVisible();
+    await expect(memberCode).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "在企业微信内继续授权" }),
+    ).toHaveCount(0);
+    await page.evaluate(() => sessionStorage.removeItem("sage.wecom.install"));
+    await page.goto(`${origin}/workspaces/1/wecom`);
     await button("管理员接入").focus();
     await page.keyboard.press("Enter");
     await expect(
       page.getByRole("link", { name: "打开管理员授权入口" }),
     ).toHaveAttribute("target", "_blank");
+    await expect(memberCode).toHaveCount(0);
     await expect(page).toHaveURL(
       `${origin}/workspaces/1/wecom/install-operations/10`,
     );
@@ -382,6 +433,7 @@ try {
     await expect(
       page.getByRole("link", { name: "核验管理员身份" }),
     ).toBeVisible();
+    await expect(memberCode).toHaveCount(0);
     Object.assign(operation, {
       safeReason: "exchange_result_unknown",
       nextAction: "query_original",

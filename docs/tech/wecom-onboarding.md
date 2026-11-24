@@ -28,6 +28,8 @@
 
 管理者选择成员扫码或管理员入口，服务端返回原 operationId、nextAction、rowVersion 及当前 launch。页面按 launch.kind 呈现当前步骤；管理员接入若要求独立身份核验且 launch.kind 为 member，显示「核验管理员身份」，不改称成员安装。
 
+普通成员接入在原操作页用浏览器内的二维码编码器把当前短期 OAuth 链接绘制为二维码，供手机企业微信扫描。同页提供「在企业微信内继续授权」链接。二维码与链接共用现有的工作空间权限和有效期判断，到期或不可继续授权时一并移除。二维码绘制不向外部图像服务发送链接，也不把链接持久化到浏览器存储。
+
 原 admin 安装入口由用户在新窗口打开，保留原 Maia 会话；member 管理员核验同时提供下述手机传递入口。回到原窗口后查询原操作，只有服务端 nextAction 为 complete 时允许提交所见 rowVersion。窗口不开启自动重试、循环授权或原始 code 传递。页面不读取返回页 code，也不通过 postMessage 接收凭据。结果未知时保留原操作并先查询，完成请求未知后在取得新查询结果前关闭完成按钮。
 
 管理员首装遇到可核验的关注通知尚未处理完，服务端返回原操作的 `awaiting_verification`、`authorization_invalidation_pending` 和 `nextAction=complete`。刷新和查询仍读取同一 operationId，用户可在原期限内显式提交最新 rowVersion。若再次核对返回 `operation_authorization_invalidated`，原页显示接入受限，完成入口随服务端动作关闭。这里沿用原结果页及原 API，刷新只发起查询，恢复仍取决于独立的已保存结果资格。

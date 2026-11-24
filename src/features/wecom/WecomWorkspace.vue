@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from "vue";
+import QRCode from "qrcode";
+import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from "vue";
 import type { WecomApi } from "../../api/mud";
 import type { createSessionController } from "../../auth/session";
 import { createWecomPage } from "./wecom-page";
@@ -85,6 +86,26 @@ const launchUrl = computed(() =>
     : undefined,
 );
 const memberLaunch = computed(() => launchUrl.value && identityRound.value);
+const memberInstallUrl = computed(() =>
+  state.operation?.launch?.kind === "member" && !identityRound.value
+    ? launchUrl.value
+    : undefined,
+);
+const memberCode = useTemplateRef("memberCode");
+const memberCodeError = ref(false);
+watch([memberCode, memberInstallUrl], async ([canvas, url], _, onCleanup) => {
+  memberCodeError.value = false;
+  if (!canvas || !url) return;
+  let active = true;
+  onCleanup(() => {
+    active = false;
+  });
+  try {
+    await QRCode.toCanvas(canvas, url, { scale: 5 });
+  } catch {
+    if (active) memberCodeError.value = true;
+  }
+});
 const canRecover = computed(
   () =>
     !state.mustQuery &&
@@ -176,6 +197,26 @@ onBeforeUnmount(page.dispose);
           <p v-if="state.operation.phase === 'completed'">
             可信安装绑定已完成。联系人覆盖、存档开通与终端接入需分别核对。
           </p>
+          <template v-if="memberInstallUrl">
+            <p v-if="!memberCodeError">
+              用手机企业微信扫一扫。授权完成后，回到此页查询原操作。
+            </p>
+            <canvas
+              v-show="!memberCodeError"
+              ref="memberCode"
+              class="member-authorization-code"
+              role="img"
+              aria-label="成员授权二维码"
+              width="240"
+              height="240"
+            />
+            <p
+              v-if="memberCodeError"
+              role="status"
+            >
+              二维码暂不可用。可刷新重试，或用下方链接在手机企业微信内继续授权。
+            </p>
+          </template>
           <div class="terminal-actions">
             <button
               v-if="memberLaunch"
@@ -197,7 +238,7 @@ onBeforeUnmount(page.dispose);
                 : state.operation.safeReason ===
                   "administrator_identity_required"
                   ? "核验管理员身份"
-                  : "打开成员扫码入口"
+                  : "在企业微信内继续授权"
             }}</a>
             <button
               :disabled="state.busy"
@@ -292,7 +333,7 @@ onBeforeUnmount(page.dispose);
             ></label>
           </template>
           <p
-            v-else-if="launchUrl"
+            v-else-if="launchUrl && !memberInstallUrl"
             class="muted"
           >
             在新窗口完成企微授权后，回到此页查询原操作。刷新此页不会再次提交安装邀请。
@@ -492,3 +533,12 @@ onBeforeUnmount(page.dispose);
     </section>
   </template>
 </template>
+
+<style scoped>
+.member-authorization-code {
+  display: block;
+  max-inline-size: 100%;
+  block-size: auto;
+  margin-block-end: var(--space-3);
+}
+</style>
